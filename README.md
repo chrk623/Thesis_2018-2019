@@ -1,5 +1,4 @@
-# Honours-Project
-Honours Project 2017
+# Honours Research Project 2017
 
 Topic: Survey Statistics in a Database
 
