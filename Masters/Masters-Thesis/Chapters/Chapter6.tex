@@ -1,0 +1,41 @@
+%% Chapter Template
+%
+\chapter{Discussion} \label{c6}
+
+At the beginning of the report, we have discussed the limitations of a few current approaches of teaching data joining and reshaping. The traditional method of teaching with static images is limited because they are not descriptive enough. First, they usually use dummy data sets with no meaning, or data sets with vocabulary that the learners may be unfamiliar with. Second, they assume that learners can imagine data sets or the process of the transformation in their head.
+
+Another approach found was to teach this with animations. With this approach, the user does not have to imagine the data transformation process. However, they still use data sets which are meaningless. Although, this does solve some of the limitations that the static image approach brings, we are interested to extend this.
+
+Therefore, we attempted develop a tool which generate animations to address all the limitations mentioned above. Additionally, this tool can also be used as a resource for the data joining and reshaping module in \textbf{iNZight} to help users understand these operations in visual way.
+
+
+\section{Future work}
+Though some of the animations in the software already handles complicated situations while joining or reshaping data sets, we can still expand them to handle more complicated tasks. 
+
+Additionally, we should allow students or learners to view these animations and make adjustments to the software based on their feedback.
+
+Lastly, a \textsf{SQL} module is already under development. Although it is not ready at the moment but it is a good extension to our current joining module. 
+
+
+
+\section{Conclusion}
+We have seen multiple approaches of teaching data joining and reshaping, they turned out to be not as efficient, mostly because of the of lack explanation in the transformation process. Therefore to overcome this problem, we used technique like highlighting, line animation, fading and instructional messages. On top of that we tried to be very careful with the ordering of these operations. 
+
+This piece of software allows users to visualise the process of data joining and reshaping. Therefore, they should be more easier to understand than most of the common approach of teaching data joining and reshaping.
+
+
+\newpage
+\section{Usage}
+The \textbf{dataAnim} is hosted on \textsf{Github} at \href{https://github.com/chrk623/dataAnim}{https://github.com/chrk623/dataAnim}. To install \textbf{dataAnim} in \textsf{R}:
+
+\begin{lstlisting}
+ devtools::install_github("chrk623\dataAnim")
+\end{lstlisting}
+
+It is suggested to view the animations in \textbf{Chrome} and have the latest version of \textbf{Rstudio}. It is also suggested to use the most up to date version of all the dependency packages.
+
+Lastly, the shiny interactive dashboard can be found at 
+
+\href{https://chrk623.shinyapps.io/dataAnim_shiny/}{https://chrk623.shinyapps.io/dataAnim\_shiny/}.
+
+

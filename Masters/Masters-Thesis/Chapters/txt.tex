@@ -1,0 +1,7390 @@
+T HE U NIVERSITY OF A UCKLAND
+H ONOURS P ROJECT
+
+Survey statistics in a database
+
+Author:
+Charco H UI
+
+Supervisor:
+Professor Thomas L UMLEY
+
+A thesis submitted in fulfilment of the requirements
+for the degree of Bachelor of Science (Honours)
+in the
+Department of Statistics
+
+May 23, 2018
+
+iii
+
+THE UNIVERSITY OF AUCKLAND
+
+Abstract
+Department of Statistics
+Bachelor of Science (Honours)
+Survey statistics in a database
+by Charco H UI
+Multistage surveys can give rise to moderately large data sets (tens of millions of
+rows). Most current software for survey analysis reads the data into memory, the
+survey package in R provides fairly comprehensive analysis features for complex
+surveys which are small enough to fit into memory easily, however, most of the
+computations can actually be expressed as database operations. There is already a
+similar approach with the sqlsurvey package in R which performs substantial computation in SQL in the database, importing only small summary tables into R, this
+approach scales to very large surveys such as the American Community Survey and
+the Nationwide Emergency Department Sample, but this approach causes compatible issues with different types of databases. Therefore, in this project I will work on
+implementing R functions and testing some survey computations using the dplyr
+and dbplyr R package as a database interface.
+
+v
+
+Acknowledgements
+I would like to acknowledge my supervisor, Professor Thomas Lumley with my
+deepest appreciation. I would like to thank him for his patience in sharing his expertise, without his help, this project would not be possible.
+Lastly, i would like to thank my friends and family for their continuous support.
+
+vii
+
+Contents
+Abstract
+
+iii
+
+Acknowledgements
+
+v
+
+1
+
+.
+.
+.
+.
+.
+.
+.
+.
+
+1
+1
+1
+2
+2
+2
+3
+3
+4
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+5
+5
+7
+7
+7
+8
+8
+9
+9
+9
+10
+10
+11
+11
+11
+12
+13
+14
+15
+15
+15
+15
+16
+16
+16
+16
+18
+18
+18
+
+2
+
+Introduction
+1.1 Background . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+1.2 Survey data in SQL . . . . . . . . . . . . . . . . . . . . . . . . .
+1.3 Coding with dplyr and dbplyr . . . . . . . . . . . . . . . . . .
+1.3.1 Introduction to dplyr . . . . . . . . . . . . . . . . . . . .
+1.3.2 Pipes . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+1.3.3 dplyrâs SQL compatibility (dbplyr) . . . . . . . . . . . .
+1.3.4 Quasi-quotation . . . . . . . . . . . . . . . . . . . . . . .
+1.3.5 Common issues while coding with dplyr in a database
+Methodology
+2.1 Survey Design . . . . . . .
+2.2 Population Total . . . . . .
+2.2.1 Usage . . . . . . . .
+2.2.2 Arguments . . . .
+2.2.3 Examples . . . . .
+2.2.4 Difficulties . . . . .
+2.3 Population Mean . . . . .
+2.3.1 Usage . . . . . . . .
+2.3.2 Arguments . . . .
+2.3.3 Examples . . . . .
+2.3.4 Difficulties . . . . .
+2.4 Regression . . . . . . . . .
+2.4.1 Usage . . . . . . . .
+2.4.2 Arguments . . . .
+2.4.3 Examples . . . . .
+2.4.4 Difficulties . . . . .
+2.5 Quantiles . . . . . . . . . .
+2.5.1 Usage . . . . . . . .
+2.5.2 Arguments . . . .
+2.5.3 Examples . . . . .
+2.5.4 Difficulties . . . . .
+2.6 Survey Tables . . . . . . .
+2.6.1 Usage . . . . . . . .
+2.6.2 Arguments . . . .
+2.6.3 Examples . . . . .
+2.7 Survey Statistic on Subsets
+2.7.1 Usage . . . . . . . .
+2.7.2 Arguments . . . .
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+viii
+
+2.8
+
+3
+
+4
+
+5
+
+2.7.3 Examples . . . . . . . . . . . . . . . . . .
+Replicate Weights . . . . . . . . . . . . . . . . . .
+2.8.1 Replicate Standard Errors . . . . . . . . .
+2.8.2 Survey Replicate Design . . . . . . . . . .
+2.8.3 Examples . . . . . . . . . . . . . . . . . .
+2.8.4 Population Total with replicate weights .
+2.8.5 Population Mean with replicate weights .
+
+Graphics
+3.1 Histogram . . . . . . . . . .
+3.1.1 Usage . . . . . . . . .
+3.1.2 Arguments . . . . .
+3.1.3 Examples . . . . . .
+3.1.4 Difficulty . . . . . . .
+3.2 Box Plot . . . . . . . . . . . .
+3.2.1 Usage . . . . . . . . .
+3.2.2 Arguments . . . . .
+3.2.3 Examples . . . . . .
+3.3 Hexagon Binning . . . . . .
+3.3.1 Usage/Arguments .
+3.3.2 Examples . . . . . .
+3.3.3 Difficulties . . . . . .
+3.4 Conditional Plots . . . . . .
+3.4.1 Function description
+3.4.2 Examples . . . . . .
+3.5 Why ggplot? . . . . . . . . .
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+
+18
+19
+19
+19
+20
+20
+20
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+21
+22
+22
+22
+22
+23
+24
+24
+24
+24
+25
+25
+26
+26
+28
+28
+28
+29
+
+Results
+4.1 Total . . . . . . . . . . . . . . . . . . . . .
+4.1.1 Numeric variable . . . . . . . . .
+4.1.2 Categorical variable with 7 levels
+4.2 Mean . . . . . . . . . . . . . . . . . . . .
+4.2.1 Numeric variable . . . . . . . . .
+4.2.2 Categorical variable with 7 levels
+4.3 Regression . . . . . . . . . . . . . . . . .
+4.4 Quantiles . . . . . . . . . . . . . . . . . .
+4.5 Survey Tables . . . . . . . . . . . . . . .
+4.6 Total - Replicate Weights . . . . . . . . .
+4.7 Mean - Replicate Weights . . . . . . . .
+4.8 Histogram . . . . . . . . . . . . . . . . .
+4.9 Boxplot . . . . . . . . . . . . . . . . . . .
+4.10 Hexagon Binning . . . . . . . . . . . . .
+4.11 Time Comparison . . . . . . . . . . . . .
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+31
+32
+32
+32
+33
+33
+33
+34
+34
+35
+35
+36
+36
+37
+37
+38
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+Usability
+39
+5.1 The package . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 39
+5.2 Supporting functions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 39
+5.3 Testing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 39
+
+ix
+6
+
+Discussion
+6.1 Overview . . . . . . . .
+6.2 Future work . . . . . .
+6.2.1 Error Messages
+6.2.2 Functions . . .
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+A Codes
+A.1 svydbdesign . . . . . . . . .
+A.2 svydbtotal . . . . . . . . . .
+A.3 svydbmean . . . . . . . . . .
+A.4 svydblm . . . . . . . . . . .
+A.5 svydbquantile . . . . . . . .
+A.6 svydbtable . . . . . . . . . .
+A.7 svydbby . . . . . . . . . . .
+A.8 svydbrepdesign . . . . . . .
+A.9 svydbreptotal . . . . . . . .
+A.10 svydbrepmean . . . . . . . .
+A.11 svydbhist . . . . . . . . . . .
+A.12 svydbboxplot . . . . . . . .
+A.13 svydbhexbin, svydbhexplot
+A.14 svydbcoplot . . . . . . . . .
+A.15 Other Functions . . . . . . .
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+.
+.
+.
+.
+
+41
+41
+41
+41
+41
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+43
+43
+45
+47
+48
+51
+53
+55
+56
+59
+60
+62
+63
+65
+68
+69
+
+B Result Tables
+B.1 Total . . . . . . . . . . . . . . . . . . . . .
+B.1.1 Numeric variable . . . . . . . . .
+B.1.2 Categorical variable with 7 levels
+B.2 Mean . . . . . . . . . . . . . . . . . . . .
+B.2.1 Numeric variable . . . . . . . . .
+B.2.2 Categorical variable with 7 levels
+B.3 Regression . . . . . . . . . . . . . . . . .
+B.4 Quantiles . . . . . . . . . . . . . . . . . .
+B.5 Survey Tables . . . . . . . . . . . . . . .
+B.6 Total - Replicate Weights . . . . . . . . .
+B.7 Mean - Replicate Weights . . . . . . . .
+B.8 Histogram . . . . . . . . . . . . . . . . .
+B.9 Boxplot . . . . . . . . . . . . . . . . . . .
+B.10 Hexagon Binning . . . . . . . . . . . . .
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+77
+77
+77
+77
+78
+78
+78
+79
+79
+80
+80
+80
+81
+81
+82
+
+Bibliography
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+83
+
+xi
+
+List of Figures
+3.1
+3.2
+3.3
+3.4
+3.5
+3.6
+
+svydbhist example . . . . . . . . . . . . . . . . . .
+svydbboxplot example . . . . . . . . . . . . . . . .
+svydbhexplot example . . . . . . . . . . . . . . . .
+Hexagon binning explanation, (Lewin-Koh, 2016)
+svydbcoplot example . . . . . . . . . . . . . . . . .
+Why use ggplot . . . . . . . . . . . . . . . . . . . .
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+
+22
+24
+26
+27
+28
+29
+
+4.1
+4.2
+4.3
+4.4
+4.5
+4.6
+4.7
+4.8
+4.9
+4.10
+4.11
+4.12
+
+Population total time comparison - Numeric . .
+Population total time comparison - Categorical .
+Population mean time comparison - Numeric . .
+Population mean time comparison - Categorical
+Regression time comparison - 5 variables . . . .
+Median time comparison - Categorical . . . . . .
+Tables time comparison - Categorical . . . . . . .
+Replicate total time comparison - Numeric . . .
+Replicate mean time comparison - Numeric . . .
+Histogram time comparison - Categorical . . . .
+Boxplot time comparison . . . . . . . . . . . . . .
+Hexagon Binning time comparison . . . . . . . .
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+32
+32
+33
+33
+34
+34
+35
+35
+36
+36
+37
+37
+
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+
+1
+
+Chapter 1
+
+Introduction
+1.1
+
+Background
+
+Currently there is already a survey package (Lumley, 2004) in R which is at a stable production status, it provides survey analysis, including graphics, estimation
+and inference. It also supports both replicate-weight and Taylor linearisation standard errors, and can efficiently handle multistage stratified designs without replacements. However, it requires the data sets to be stored in a data frame in memory. For
+most survey data sets this is not a problem, however, nowadays there are a number
+of large survey data sets, for example the American Community Survey (ACS) includes 3,000,000 people per year, and the Nationwide Emergency Department Sample (NEDS) includes more then 25,000,000 hospital visit records per year.
+In R, there are currently two approaches to analysis survey data sets in a database.
+The first is to use the survey package, with itâs database back-end function, the data
+sets can be loaded into memory without any problem, but the time to analysis the
+data may not be promising when the data sets are too large.
+Another approach is to perform as much computation as possible directly in the
+database, so that only small bits of data or numbers are transferred into memory
+when necessary. This approach is more efficient but is less flexible, since mathematics and statistical operations are limited in a database. Another advantage of this
+approach is that if the database is powerful, then the computation would be faster
+than just using a standard laptop or desktop.
+The second approach is implemented in the sqlsurvey R package (Lumley, 2014),
+however codes which communicates with the databases are written in "hand-written
+SQL code". Therefore, it would be hard to maintain and would cause compatible issues with different types of databases.
+The better approach to analyse survey data sets in a database would be to use the
+R packages dplyr (Wickham et al., 2017) and dbplyr (Wickham and Ruiz, 2018) as a
+database interface. Since these packages are maintained by experts at Rstudio, it is
+likely that these packages are more stable than others, bug fixes and updates would
+also be quick. So, in this project i will implement a sets of functions to analyse survey
+data sets with the second approach, named svydb.
+
+1.2
+
+Survey data in SQL
+
+As mentioned in section 1.1, when we are analysing large survey data sets, it would
+be more feasible to do it in a database. Some commonly used survey statistics are
+survey mean, survey total, summaries and regression.
+Survey totals, means and summaries can be easily computed in a database, since
+it only requires simple arithmetic like summing, multiplications, divisions along
+with some grouping.
+Regression may require a bit more work, since it requires matrix operations
+which is not supported in SQL, however by loading a few chucks of small matrices
+into memory, it can still be easily implemented in a database, since after all regression coefficients and their variances only requires sums and multiplications.
+More details of the calculations and difficulties will be discussed later on in
+Chapter 2.
+
+1.3
+1.3.1
+
+Coding with dplyr and dbplyr
+Introduction to dplyr
+
+The dplyr package was implemented to manipulate, clean and construct data. With
+this package, data manipulation and data exploration can be done easily and quickly,
+since the it was written in a computationally efficient manner.
+The package contains a few common data manipulating functions such as selecting specific columns, arranging or creating new columns, filtering rows, merging
+data (joins) and summarising data by groups. Other functions such as simple statistics operations are also included in the package.
+
+1.3.2
+
+Pipes
+
+The pipe operator (%>%) first appeared in magrittr package (Bache and Wickham,
+2014), and is created to make codes more readable. The pipe operator inputs the
+object on the left-hand side of the pipe into the function on right hand side. Some
+basic piping are as follows:
+â¢ x %>% f is equivalent to f(x).
+â¢ x %>% f(y) is equivalent to f(x, y).
+It is rather useful when we have multiple steps while we are transforming data sets,
+because naturally we read from left to right. For example, with traditional coding,
+reading is always from inside out,
+> x = sample ( 1 0 )
+> summary ( diff ( exp ( floor ( cos ( x )))))
+with piping, it is much easier to read,
+> x % >% cos () % >% floor () % >% exp () % >% diff ()
+% >% summary ()
+Though the pipe has its advantages, there are also times that it is not useful. It would
+not be useful when the intermediate variables are needed or when the intermediate
+variables requires heavy computation.
+
+1.3. Coding with dplyr and dbplyr
+
+1.3.3
+
+3
+
+dplyrâs SQL compatibility (dbplyr)
+
+As mentioned in section 1.3.1, there are six basic functions in dplyr. These functions
+are all related to the basic SQL queries.
+dplyr Function
+select()
+filter ()
+group_by()
+arrange()
+join()
+mutate()
+
+Description
+Selecting columns (variables)
+Filter (subset) rows.
+Group the data
+Sort the data
+Joining tables
+Creating New Variables (Columns)
+
+Equivalent SQL
+SELECT
+WHERE
+GROUP BY
+ORDER BY
+JOIN
+COLUMN ALIAS
+
+With dbplyr, when these dplyr functions are applied onto a sql table, they automatically translate itself into SQL queries. For example,
+> mtdb % >% select ( mpg , gear ) % >% group _ by ( gear ) % >%
+summarise ( sum _ mpg = sum ( mpg )) % >% head ( 3 ) % >%
+show _ query ()
+#
+#
+#
+#
+#
+#
+
+<SQL >
+SELECT " gear " , SUM (" mpg ") AS " sum _ mpg "
+FROM ( SELECT " mpg " AS " mpg " , " gear " AS " gear "
+FROM " mtcars ") " gaecowztcc "
+GROUP BY " gear "
+LIMIT 3
+
+With this approach, dplyr does not actually do any work, itâs job is only to translate
+the codes into SQL and gives the database instructions. Another advantage of this
+method is that the intermediate variables between the pipes only builds up the query
+and does not get evaluated nor is stored anywhere.
+
+1.3.4
+
+Quasi-quotation
+
+Programming with dplyr relies on a concept called the Quasi-quotation, also known
+as the non standard evaluation, it means that while we are doing some evaluation
+with dplyr in R, we are not using Râs standard evaluation method. For example,
+with Râs standard method,
+test _ func = function (x , y ){
+x + y
+}
+> x1 = 1; x2 = 2
+> test _ func ( x 1 , x 2 )
+R looks for the variables x1 and x2 in the environment and inputs it into the function
+test_func.
+However, while programming in dplyr,
+> mtcars % >% select ( mpg )
+The variable mpg is a variable in the data set and cannot be found in the environment,
+it is quoted and evaluated in a non standard way.
+
+4
+
+Chapter 1. Introduction
+
+Though, it might look useful to use this non standard evaluation method, but it
+is more difficult to program with, for example while writing a function,
+test _ fun 2 = function ( data , x ){
+data % >% select ( x ) % >% head ( 2 )
+}
+> test _ fun 2 ( mtcars , mpg )
+# Error : âx â must resolve to integer column positions ,
+# not a list
+Since dplyr does not evaluate in the standard way, we cannot just pass a variable
+in like the standard method. We will need to quote it with the quo() or enquo()
+function.
+test _ fun 2 = function ( data , x ){
+x = enquo ( x )
+data % >% select (!! x ) % >% head ( 2 ) % >% tbl _ df ()
+}
+> test _ fun 2 ( mtcars , mpg )
+#
+mpg
+# * <dbl >
+#1
+21
+#2
+21
+enquo() allows us to quote (also known as quosure) the variable so we can pass it
+into the select() function, and !! (bang bang) allows us to unquote the variable at
+evaluation.
+There are also other similar functions to help us overcome the difficulties while
+programming with dplyr, like quos(), sym() and quo_name() which are used in
+different situations.
+
+1.3.5
+
+Common issues while coding with dplyr in a database
+
+â¢ No factor types.
+â¢ Difficult to code with quasi-quotation.
+â¢ Cannot do row-wise operations due to laziness. That is, the data sets within a
+database in R will not be loaded into memory unless required.
+â¢ No matrix operations.
+â¢ No base R functions.
+â¢ No distributions.
+â¢ Inconsistent restrictions between databases.
+
+5
+
+Chapter 2
+
+Methodology
+2.1
+
+Survey Design
+
+When analysing survey data sets in the survey package, a survey design (svydesign()) is always required. The survey design object combines the data set and all
+the survey design information needed to analyse it. These objects are used by the
+survey modelling and summary functions.
+The sets of functions that surveydb provides also adapted that concept but with
+a few modifications, it uses the R6 (Chang, 2017) class system which is encapsulated
+object orientation programming and is different to the standard S3 and S4 in base
+R which uses functional object orientation programming. The main difference between the two is that S3 and S4 methods and objects are separate and in R6, object
+contains methods and data.
+The advantage of encapsulated object orientation programming is that information within the objects are not computed unless it is needed, for example when the
+sum of all sampling weights are needed, we can compute it by using a method
+within the object and the value also updates when itâs been called on a subset of
+the object.
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> nh . dbsurv $ getwt ()
+[1] 306590681
+> nh . dbsurv $ subset ( Race 3 == 3 )$ getwt ()
+[1] 192721267
+Therefore, it is much more time efficient than creating a survey design that contains all the information, since the user may not need every information within the
+object.
+The svydbdesign() function, has four basic arguments,
+svydbdesign(st = NULL, id = NULL, wt, data)
+â¢ st = Column name specifying the strata column. NULL for no strata.
+â¢ id = Column name specifying the cluster column. NULL for no cluster.
+â¢ wt = Column name specifying the sampling weights column.
+â¢ data = A data frame or sql table of the survey data set.
+
+6
+
+Chapter 2. Methodology
+
+When the svydb.design object is called directly, a brief description of the design
+will be shown.
+> nh . dbsurv
+svydb . design , 9 7 5 6 observation ( s ) , 3 1 Clusters
+Functions within the svydb.design object for users to use are,
+Classes â svydb . design â , âR 6 â < svydb . design >
+.
+.
+clone : function ( deep = FALSE )
+getmh : function ()
+getwt : function ()
+subset : function (... , logical = T )
+subset _ rows : function ( from , to )
+â¢ clone() = Create a clone of the object.
+â¢ getmh() = A table indicating strata and cluster information.
+â¢ getwt() = Compute the sum of the sampling weights.
+â¢ subset() = Subset the design by conditions, similar to base :: subset.
+e.g.(design$subset(Race3 == 3)
+â¢ subset_rows() = Subset the design by rows. e.g.(design$subset_rows(1, 100)
+)
+
+2.2. Population Total
+
+2.2
+
+7
+
+Population Total
+
+The function svydbtotal() was designed to estimate the population total in R by
+using dplyr, it is compatible with data frames and sql tables and was designed to do
+as much computation as possible in a database.
+In the function svydbtotal(), the total is computed by using the Horvitz-Thompson
+estimator (Horvitz and Thompson, 1952), it is an unbiased estimator of the population total.
+Ë =
+Total
+
+mh
+
+L
+
+â â zhi
+
+h =1 i =1
+
+where,
+zhi =
+
+â
+
+whij xhij
+
+jâ PSU
+
+â¢ L = number of stratum
+â¢ mh = number of clusters in stratum h
+â¢ whij = the sample weight in stratum h and cluster i for observation j.
+Variance estimation of the total uses the Horvitz-Thompson estimator on an influence function
+Ë )=
+Var ( Total
+
+m h mh
+â mh â 1 â (zhi â zÌh )T (zhi â zÌh )
+i =1
+h =1
+L
+
+where,
+1
+zÌh =
+mh
+
+2.2.1
+
+mh
+
+â zhi
+
+i =1
+
+Usage
+svydbtotal(x, num = T, return.total = F, design)
+
+2.2.2
+
+Arguments
+
+â¢ x = Name indicating the variable.
+â¢ num = TRUE or FALSE indicating whether x is numeric or categorical.
+â¢ return.total = TRUE to return only totals, no standard errors.
+â¢ design = svydb.design object.
+
+8
+
+Chapter 2. Methodology
+
+2.2.3
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> svydbtotal ( x = Race 3 , design = nh . dbsurv , num = T )
+#
+Total
+SE
+# Race 3 9 5 9 3 8 0 8 4 2 6 1 4 3 2 5 9 5
+>
+#
+#
+#
+#
+#
+#
+#
+
+svydbtotal ( x = Race 3 , design = nh . dbsurv , num = F )
+Total
+SE
+Race 3 _ 1 2 9 8 1 2 3 1 6 6 1 1 2 5 2 7
+Race 3 _ 2 2 1 4 1 6 1 6 4 4 4 8 5 8 6 5
+Race 3 _ 3 1 9 2 7 2 1 2 6 7 2 3 4 3 1 2 9 6
+Race 3 _ 4 3 8 1 3 1 5 3 8 5 5 6 1 1 6 1
+Race 3 _ 6 1 5 5 1 9 5 2 9 2 3 6 7 7 2 3
+Race 3 _ 7
+8989867 1468813
+
+> svydbtotal ( x = Race 3 , design = nh . dbsurv , num = T ,
+return . total = T )
+#
+Total
+# Race 3 9 5 9 3 8 0 8 4 2
+Generic functions like coef() and SE() were also implemented to extract the
+coefficients and standard errors from a svydbstat object.
+> class ( svydbtotal ( x = Race 3 , design = nh . dbsurv , num = T ))
+# [ 1 ] " svydbstat "
+> coef ( svydbtotal ( x = Race 3 , design = nh . dbsurv , num = T ))
+# [1] 959380842
+> SE ( svydbtotal ( x = Race 3 , design = nh . dbsurv , num = T ))
+#
+Race 3
+# 61432595
+
+2.2.4
+
+Difficulties
+
+1. In SQL if a column contains only numbers, it is not possible to identify whether
+a column type is factor or numeric, therefore in the svydbtotal() function, the
+user needs to specify it. num = TRUE: Numeric, num = FALSE: Factor.
+2. To compute the population total for a categorical variable, dummy variables
+are needed. In SQL, there are two ways to do this. The first way would be
+to create new columns for every levels of the variable manually and apply
+ifelse/CASE WHEN to each of the columns. Another way would be to create
+a small contrast table in memory, and use INNER JOIN to join the small table
+onto the data set. There second approach is much faster, and the function
+dummy_mut() adapts that approach. It creates (mutate) new dummy columns
+on the right side of the data set.
+3. Calculating the variance/standard error is the most complex part of svydbtotal().
+Therefore the svyVar() function is written to calculate the variance of a variable. If the variable is a categorical variable with multiple levels, the calculations will be replicated with sapply().
+
+2.3. Population Mean
+
+2.3
+
+9
+
+Population Mean
+
+The function svydbmean() was designed to estimate the population mean in R by
+using dplyr, it is compatible with data frames and sql tables and was designed to do
+as much computation as possible in a database.
+In the function svydbmean(), the mean is computed by using the Horvitz-Thompson
+estimator, it is an unbiased estimator of the population mean.
+Ë = 1
+Mean
+NÌ
+
+L
+
+mh
+
+â â zhi
+
+h =1 i =1
+
+where,
+NÌ =
+
+â
+
+wj,
+
+zhi =
+
+jâ PSU
+
+â
+
+whij xhij
+
+jâ PSU
+
+â¢ L = number of stratum
+â¢ mh = number of clusters in stratum h
+â¢ whij = the sample weight in stratum h and cluster i for observation j.
+Variance estimation of the mean uses the Horvitz-Thompson estimator on an influence function
+Ë )=
+Var ( Mean
+
+m h mh
+â mh â 1 â (dhi â dÂ¯h )T (dhi â dÂ¯h )
+i =1
+h =1
+L
+
+where,
+dhi =
+
+2.3.1
+
+1
+NÌ
+
+â
+
+whij ( xhij â xÌ ),
+
+jâ PSU
+
+1
+dÂ¯h =
+mh
+
+mh
+
+â dhi
+
+i =1
+
+Usage
+svydbmean(x, num = T, return.mean = F, design)
+
+2.3.2
+
+Arguments
+
+â¢ x = Name indicating the variable.
+â¢ num = TRUE or FALSE indicating whether x is numeric or categorical.
+â¢ return.mean = TRUE to return only means, no standard errors.
+â¢ design = svydb.design object.
+
+10
+
+Chapter 2. Methodology
+
+2.3.3
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> svydbmean ( x = Race 3 , design = nh . dbsurv , num = T )
+#
+Mean
+SE
+# Race 3 3 . 1 2 9 2 0 . 0 6 7 4
+>
+#
+#
+#
+#
+#
+#
+#
+
+svydbmean ( x = Race 3 , design = nh . dbsurv , num = F )
+Mean
+SE
+Race 3 _ 1 0 . 0 9 7 2 3 8 0 . 0 2 0 8
+Race 3 _ 2 0 . 0 6 9 8 5 3 0 . 0 1 5 4
+Race 3 _ 3 0 . 6 2 8 5 9 5 0 . 0 4 0 7
+Race 3 _ 4 0 . 1 2 4 3 7 3 0 . 0 2 3 9
+Race 3 _ 6 0 . 0 5 0 6 2 0 0 . 0 0 8 0
+Race 3 _ 7 0 . 0 2 9 3 2 2 0 . 0 0 4 5
+
+Generic functions like coef() and SE() were also implemented to extract the
+coefficients and standard errors from a svydbstat object. This is useful since the
+svydbstat objects are rounded when they are printed, by using coef() and SE(), the
+unrounded value can be extracted.
+> class ( svydbmean ( x = Race 3 , design = nh . dbsurv , num = T ))
+# [ 1 ] " svydbstat "
+> coef ( svydbmean ( x = Race 3 , design = nh . dbsurv , num = T ))
+# [1] 3.129191
+> SE ( svydbmean ( x = Race 3 , design = nh . dbsurv , num = T ))
+#
+Race 3
+# 0.06735437
+
+2.3.4
+
+Difficulties
+
+1. In SQL cannot recognise factor variables. Explained in difficulty 1 from chapter
+2.2 (Population Total).
+2. SQL cannot create dummy variables. Explained in difficulty 2 from chapter 2.2
+(Population Total).
+3. Difficult to compute the variances. Explained in difficulty 3 from chapter 2.2
+(Population Total).
+
+2.4. Regression
+
+2.4
+
+11
+
+Regression
+
+The function svydblm() was designed to fit a linear model to survey data in R by
+using dplyr, it is compatible with data frames and sql tables and was designed to do
+as much computation as possible in a database.
+In the function svydblm(), the coefficients are computed by,
+Î²Ì = ( X T WX )â1 ( X T WY )
+â¢ W = Sampling weights
+Variance estimation of the coefficients uses a similar approach as survey mean/total,
+Var pq ( Î²ÌË ) =
+
+m h mh
+â (zhip â zÌhp )T (zhiq â zÌhq )
+m
+â
+1
+h
+i =1
+h =1
+L
+
+â
+
+where,
+zhi = xhij whij (yhij â Âµhij ),
+
+zÌh =
+
+1
+mh
+
+mh
+
+â zhi
+
+i =1
+
+And by using the sanwich estimator,
+cov( Î²Ì) = ( X T WX )â1 Var pq ( Î²Ì)( X T WX )â1
+â¢ L = number of stratum
+â¢ mh = number of clusters in stratum h
+â¢ whij = the sample weight in stratum h and cluster i for observation j.
+â¢ p, q = Indicator function for variables p and q.
+
+2.4.1
+
+Usage
+svydblm(formula, design)
+
+2.4.2
+
+Arguments
+
+â¢ f ormula = Model formula.
+â¢ design = svydb.design object.
+
+12
+
+Chapter 2. Methodology
+
+2.4.3
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> svydblm ( DirectChol ~ Age + BMI + factor ( Gender ) ,
+design = nh . dbsurv )
+# svydb . design , 9 7 5 6 observation ( s ) , 3 1 Clusters
+#
+# Survey design :
+# svydbdesign ( st = SDMVSTRA , id = SDMVPSU , wt = WTMEC 2 YR ,
+#
+data = nhdb )
+#
+# Call :
+# svydblm ( formula = DirectChol ~ Age + BMI + factor ( Gender ) ,
+#
+design = nh . dbsurv )
+#
+# Coefficients :
+#
+intercept Age
+BMI
+Gender _ 2
+# [ 1 ,]
+1.632111
+0 . 0 0 3 2 5 4 -0 . 0 1 8 6 3 6
+0.218086
+The summary() function to obtain the summary of the model and predict() function to predict using new data-sets with the model was also implemented,
+# dbfit = svydblm ( formula = DirectChol ~ Age + BMI ,
+#
+design = nh . dbsurv )
+>
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+
+summary ( dbfit )
+Call :
+svydblm ( formula = DirectChol ~ Age + BMI ,
+design = nh . dbsurv )
+
+Coefficients :
+Estimate Std . Error t value Pr ( >| t |)
+intercept 1 . 7 2 6 3 1 3 5 0 . 0 2 7 9 7 0 3 6 1 . 7 1 9 < 2e - 1 6 ***
+Age
+0.0034161 0.0003428
+9 . 9 6 6 5 . 2 3e - 0 8 ***
+BMI
+-0 . 0 1 8 2 4 6 8 0 . 0 0 1 1 2 7 7 -1 6 . 1 8 1 6 . 6 3e - 1 1 ***
+--Signif . codes : 0
+***
+0.001
+**
+0.01
+*
+0.05
+.
+0.1
+1
+
+>
+#
+#
+#
+#
+
+predict ( dbfit , newdata = data . frame ( Age = 1 : 3 , BMI = 4 : 6 ))
+link
+SE
+1 1.6567 0.0242
+2 1.6419 0.0233
+3 1.6271 0.0225
+
+Survey design :
+svydbdesign ( st = SDMVSTRA , id = SDMVPSU , wt = WTMEC 2 YR ,
+data = nhdb )
+
+2.4. Regression
+
+13
+
+Other generic function includes coef(), SE(), vcov() and residuals().
+# dbfit = svydblm ( formula = DirectChol ~ Age + BMI ,
+#
+design = nh . dbsurv )
+> coef ( dbfit )
+#
+intercept
+Age
+BMI
+# [ 1 ,] 1 . 7 2 6 3 1 4 0 . 0 0 3 4 1 6 1 2 4 -0 . 0 1 8 2 4 6 7 6
+> SE ( dbfit )
+#
+intercept
+Age
+BMI
+# 0.0279703171 0.0003427746 0.0011276877
+>
+#
+#
+#
+#
+
+vcov ( dbfit )
+intercept
+Age
+BMI
+intercept 7 . 8 2 3 3 8 6e - 0 4 3 . 7 6 9 6 6 3e - 0 6 -2 . 8 0 6 3 4 0e - 0 5
+Age
+3 . 7 6 9 6 6 3e - 0 6 1 . 1 7 4 9 4 4e - 0 7 -2 . 4 9 6 4 0 3e - 0 7
+BMI
+-2 . 8 0 6 3 4 0e - 0 5 -2 . 4 9 6 4 0 3e - 0 7 1 . 2 7 1 6 8 0e - 0 6
+
+>
+#
+#
+#
+#
+#
+#
+#
+
+head ( residuals ( dbfit ) , 3 )
+Source :
+lazy query [?? x 1 ]
+Database : Mo ne tDB Em be dde dC on nec ti on
+residuals
+<dbl >
+1
+-0 . 3 1 6
+2
+-0 . 3 1 8
+3
+-0 . 7 3 3
+
+2.4.4
+
+Difficulties
+
+1. SQL cannot create dummy variables. Explained in difficulty 2 from chapter 2.2
+(Population Total).
+2. In SQL matrix multiplications are not supported, however, it can still be implemented since matrix multiplications only requires addition and multiplication.
+For example with matrix X, by calculating the sums of products of the first column of the matrix with the rest of the columns (including the first column), we
+get the first row of the X T X matrix, and to get the whole X T X matrix we only
+need to repeat the process with different columns. However, the inverse of
+a matrix is not possible in SQL, so to compute ( X T X )â1 , we need to pull the
+matrix into memory.
+3. The variance for the regression coefficients are a bit more complicated than
+computing the variance for mean/total, since for mean/total we only need the
+diagonal of the co-variance matrix. However, the variance of the regression coefficients requires the whole co-variance matrix. This means that more replication with different combinations of zhip /zhiq will be needed, but we only need
+the upper triangle or the lower triangle of the matrix, since it is a symmetric
+matrix.
+
+14
+
+Chapter 2. Methodology
+
+2.5
+
+Quantiles
+
+The function svydbquantile() was designed to compute the medians/quantiles
+from survey data in R by using dplyr, it is compatible with data frames and a few
+types of sql tables and was designed to do as much computation as possible in a
+database.
+To estimate the median/quantiles, a standard probabilistic algorithm is used. For
+example to estimate the median,
+1. Take a sample of size n2/3 from the data set. (Proof below)
+2. Compute the 99% confidence interval [ a, b] of the 0.5 quantile by using svyquntile()
+from the survey package.
+3. Read in the data set where the observations are between a and b.
+4. Sort the data and compute the cumulative sum of the weights of the read in
+observations, wn = âin=1 wi
+5. Find out if the median is within the read in data set. Since median = 0.5 Ã W,
+we can find out by searching if median equals or is between wn .
+6. If the median is not found, repeat.
+Other quantiles are computed with the same method.
+Proof:
+Proof. Let M be a random sample of N.
+Then itâs confidence interval length is â Mâ1/2 .
+Though by using this method to compute the survey quantile requires at least
+two sets of data to be passed into memory, however it is still much more efficient
+than sorting and calculating the cumulative sum for the whole data set, since n2/3 is
+relatively small compared to whole data set (One million observations, 100000002/3 =
+10000).
+
+2.5. Quantiles
+
+2.5.1
+
+15
+
+Usage
+svydbquantile(x, quantiles = 0.5, design)
+
+2.5.2
+
+Arguments
+
+â¢ x = Name indicating the variable.
+â¢ quantiles = Quantiles to estimate, a number, or a vector of numbers for multiple
+quantiles. Default to 0.5.
+â¢ design = svydb.design object.
+
+2.5.3
+
+Examples
+
+> db . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> svydbquantile ( x = Age , quantile = 0 . 5 , design = nh . dbsurv )
+# 0.5
+# 37
+> svydbquantile ( x = BMI , quantile = c ( 0 . 2 5 ,0 . 7 5 ) ,
+design = nh . dbsurv )
+# 0.25 0.75
+# 21.7 30.6
+
+2.5.4
+
+Difficulties
+
+1. To compute the survey quantile, a sample of the data-set is needed. However, different types of SQL uses different queries for sampling tables and the
+sample_frac() function from dplyr currently only works with Spark (Luraschi
+et al., 2018) database connections and local dataframes/tibbles. Sampling in
+MonetDB (MonetDB-B.V., 2008) was also implemented. Therefore, currently
+the svydbquantile() is only tested with local dataframes and database connections that are mentioned above. It may be possible that it is compatible
+with other types of connections but they are to be tested. Another possibility
+is that the sample_frac() function will be extended in the future to support
+more database connections.
+2. Since to compute the survey quantile in svydbquantile(), the inputted dataset will be sized down into n2/3 , so if the inputted data-set is a pre-subsetted
+data-set then it means that the data-set will be subsetted at least twice to compute the quantiles. This could be a problem because svydbquantile() runs
+through svyquantile() form the survey package which uses svymean() within
+it. If the data-set is too small it may lose enough information and may cause
+mathematical errors. For example, if there are only one cluster within a strata
+then it will cause the equation to divide by zero.
+To overcome this, there is a option within the survey package called "survey.loney.psu", if we set this option to "adjust", e.g. options("survey.lonely.psu"
+= "adjust"), it will allow survey statistic computations even if there are only
+one cluster within a strata.
+
+16
+
+Chapter 2. Methodology
+
+2.6
+
+Survey Tables
+
+The function svydbtable() was designed to create contingency tables for survey
+data, it is compatible with data frames and sql tables and was designed to do as
+much computation as possible in a database.
+Each cell within the table is computed with the same method as svydbtotal().
+
+2.6.1
+
+Usage
+svydbtable = function(formula, design, as.local = F)
+
+2.6.2
+
+Arguments
+
+â¢ f ormula = A formula specifying margins for the table, only + can be used.
+â¢ design = svydb.design object.
+â¢ as.local = A logical value indicating the returning object type. Default is database
+tables, tbl_sql.
+
+2.6.3
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+>
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+
+svydbtable (~ MaritalStatus , design = nh . dbsurv )
+Source :
+lazy query [?? x 2 ]
+Database :
+M one tD BE mbe dd ed Con ne cti on
+Ordered by : MaritalStatus
+MaritalStatus
+wt
+<int >
+<dbl >
+1
+1 118752657.
+2
+2 12600347.
+3
+3 23868539.
+4
+4
+5486968.
+5
+5 44543092.
+6
+6 18664186.
+
+> svydbtable (~ MaritalStatus , design = nh . dbsurv ,
+as . local = T )
+#
+MaritalStatus
+wt
+#
+<int >
+<dbl >
+# 1
+1 118752657.
+# 2
+2 12600347.
+# 3
+3 23868539.
+# 4
+4
+5486968.
+# 5
+5 44543092.
+# 6
+6 18664186.
+
+2.6. Survey Tables
+> svydbtable (~ Race 3 + Smoke 1 0 0 , design = nh . dbsurv ,
+as . local = T )
+# A tibble : 6 x 5
+#
+Race 3 Smoke 1 0 0 _ 1 Smoke 1 0 0 _ 2 Smoke 1 0 0 _ 7 Smoke 1 0 0 _ 9
+#
+<int >
+<dbl >
+<dbl >
+<dbl >
+<dbl >
+# 1
+1
+6177437. 11124548.
+0
+0
+# 2
+2
+5375656.
+9313414.
+0
+0
+# 3
+3 71234238. 77533263.
+0
+29247.
+# 4
+4
+9687657. 16031251.
+22142.
+14686.
+# 5
+6
+3019921.
+8645276.
+0
+14966.
+# 6
+7
+3070772.
+2650765.
+0
+0
+
+> svydbtable (~ Race 3 + Work + Gender , design = nh . dbsurv ,
+as . local = T )
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+
+$ â Gender = 1 â
+A tibble : 6 x 6
+Race 3
+Work _ 1
+Work _ 2
+Work _ 3
+Work _ 4 Work _ 7
+<int >
+<dbl >
+<dbl >
+<dbl >
+<dbl > <dbl >
+1
+1 7063412. 118589. 805525. 2148047. 54555.
+2
+2 5066507.
+50966. 283436. 2056117.
+0
+3
+3 48916000. 1670881. 3052152. 22756262.
+0
+4
+4 6557730. 166729. 812680. 5201428.
+0
+5
+6 3689443.
+79793. 191406. 1764683.
+0
+6
+7 1747070.
+34664. 258597. 1182825.
+0
+
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+
+$ â Gender = 2 â
+A tibble : 6 x 6
+Race 3
+Work _ 1
+Work _ 2
+Work _ 3
+Work _ 4 Work _ 7
+<int >
+<dbl >
+<dbl >
+<dbl >
+<dbl > <dbl >
+1
+1 4839422.
+80842. 273991. 4040679.
+0
+2
+2 4052770.
+20057. 400463. 3907392.
+0
+3
+3 42775016. 1370755. 2995602. 34142499.
+0
+4
+4 7486159. 280862. 915095. 7070385.
+0
+5
+6 3557006. 111248. 209497. 2803386.
+0
+6
+7 1810965.
+17984. 114653. 1255186.
+0
+
+17
+
+18
+
+Chapter 2. Methodology
+
+2.7
+
+Survey Statistic on Subsets
+
+The function svydbby() was designed to compute survey statistics on subsets of the
+data in R by using dplyr, it is compatible with data frames and sql tables and was
+designed to do as much computation as possible in a database.
+This function creates a number of subsets based on the conditions given by the
+user and computes the desired survey statistic on all the subsets. Currently, it is only
+compatible with svydbtotal() and svydbmean().
+
+2.7.1
+
+Usage
+svydbby(x, by, FUN, design, ...)
+
+2.7.2
+
+Arguments
+
+â¢ x = A variable specifying the variable to pass to FUN.
+â¢ by = A variable specifying factors that define the subsets.
+â¢ FUN = A function indicating the desired survey statistics.
+â¢ design = svydb.design object.
+â¢ ... = Other arguments to pass to FUN.
+
+2.7.3
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> svydbby ( x = Age , by = Gender , FUN = svydbmean ,
+design = nh . dbsurv , num = T )
+# $ Age
+#
+Mean
+SE
+# Gender == 1 3 6 . 2 1 0 3 5 0 . 8 3 8 7 4 5 9
+# Gender == 2 3 8 . 0 9 8 9 9 0 . 6 7 2 1 7 8 9
+> svydbby ( x = BMI , by = Race 3 , FUN = svydbtotal ,
+design = nh . dbsurv , num = T )
+# $ BMI
+#
+Total
+SE
+# Race 3 == 3 5 0 0 4 8 2 2 1 0 0 6 1 2 1 8 8 9 6 6
+# Race 3 == 1 7 3 7 9 3 9 0 5 7 1 5 3 5 5 1 6 6 2
+# Race 3 == 6 3 4 7 4 3 5 9 0 2 5 2 8 7 6 4 6 4
+# Race 3 == 4 1 0 2 0 4 7 6 2 2 1 1 5 4 6 3 0 7 9 3
+# Race 3 == 7 2 2 7 7 2 9 7 2 4 3 9 6 3 7 0 0 6
+# Race 3 == 2 5 5 0 2 0 7 4 8 4 1 1 8 3 3 1 9 4 1
+
+2.8. Replicate Weights
+
+2.8
+
+19
+
+Replicate Weights
+
+In survey data sets, standard errors can never be known with any certainty and are
+only estimated. Replicate weights lets us to use a single sample with different sampling weights to capture the characteristics of multiple samples, it lets us compute
+more informed standard error estimates. Though computing standard errors from
+replicate weights usually result in them getting bigger, but the increase usually is
+not large enough that it can alter the significance level.
+Another reason for us to use replicate weights is that it provides a less complex
+way to compute the standard errors.
+Currently, replicate weights are available in a number of data sets, for example
+the American Community Survey and Puerto Rican Community Survey data. In
+these data sets, there are 80 separate replicate weights at the household/person level
+which allows us to compute the standard errors.
+
+2.8.1
+
+Replicate Standard Errors
+
+To compute the replicate standard errors, there are three steps.
+1. Compute the survey statistics of interest with the full sample weights.
+2. Rerun the analysis with each sets of the replicate weights.
+3. Calculate the standard error,
+v
+u n (r )
+u
+SE( X ) = ts â ( X â Xr )2
+r =1
+
+â¢ X = Result of the survey statistics using the full sample weights.
+â¢ Xr = Result of the survey statistics using the râth set of the replicate weights.
+â¢ s = Scale multiplier. i.e.
+
+2.8.2
+
+4
+80
+
+for the American Community Survey.
+
+Survey Replicate Design
+
+Similarly, there is a survey replicate design like the survey design from section 2.1.
+Currently, replicate statistics that are supported are survey totals and means.
+Therefore, there is no need to provide the stratification and clustering information
+to svydbrepdesign().
+svydbrepdesign(wt, repwt, scale, data)
+â¢ wt = Column name specifying the sampling weights column.
+â¢ repwt = A regular expression that matches the names of the replication weight
+variables.
+â¢ data = A data frame or sql table of the survey data set.
+
+20
+
+2.8.3
+
+Chapter 2. Methodology
+
+Examples
+
+> hde . repsurv = svydbrepdesign ( wt = WGTP , repwt = " wgtp [ 0 -9 ]+ " ,
+scale = 4 / 8 0 , data = ss 1 6 hde )
+> hde . repsurv
+# svydb . repdesign , 4 5 8 2 observation ( s ) ,
+#
+8 0 sets of replicate weights , scale = 0 . 0 5
+
+2.8.4
+
+Population Total with replicate weights
+
+need to fix
+Arguments are the same as svydbtotal().
+> hde . dbrepsurv = svydbrepdesign ( wt = WGTP ,
+repwt = " wgtp [ 0 -9 ]+ " , scale = 4 / 8 0 , data = ss 1 6 hde )
+> svydbreptotal ( x = BATH , design = hde . dbrepsurv , num = T )
+> svydbreptotal ( x = FS , design = hde . dbrepsurv , num = F )
+> svydbreptotal ( x = HHT , design = hde . dbrepsurv , num = T ,
+return . replicates = T )$ replicates
+> coef ( svydbreptotal ( x = BATH , design = hde . dbrepsurv ,
+num = T ))
+> SE ( svydbreptotal ( x = BATH , design = hde . dbrepsurv ,
+num = T ))
+
+2.8.5
+
+Population Mean with replicate weights
+
+Arguments are the same as svydbmean().
+> hde . dbrepsurv = svydbrepdesign ( wt = WGTP ,
+repwt = " wgtp [ 0 -9 ]+ " , scale = 4 / 8 0 , data = ss 1 6 hde )
+> svydbrepmean ( x = BATH , design = hde . dbrepsurv , num = T )
+> svydbrepmean ( x = FS , design = hde . dbrepsurv , num = F )
+> svydbrepmean ( x = HHT , design = hde . dbrepsurv , num = T ,
+return . replicates = T )$ replicates
+> coef ( svydbrepmean ( x = BATH , design = hde . dbrepsurv ,
+num = T ))
+> SE ( svydbrepmean ( x = BATH , design = hde . dbrepsurv ,
+num = T ))
+
+21
+
+Chapter 3
+
+Graphics
+Graphs are useful in statistics because it allows us to have a visual perspective of the
+data sets or to present them in a more meaningful way. However, when implementing graphics with survey data sets, it may become more difficult because the data
+sets are often large. For example, if every point of the large data set is plotted in a
+scatter plot, there will be too many points in the graph which will overlap and hide
+each other. There are two ways to over come this problem,
+1. Use different symbols, colour or sizes to represent different points or group of
+points. This is only suitable for data sets that are moderately large. If the data
+sets are too large, the points will still overlap each other.
+2. Condense multiple points into one point with an algorithm and use colours to
+represent the density of the sampling weights within the point. This will be
+discussed with more detail in section 3.3.
+Another approach would be to take a sample from the full data set based on the
+estimated population distribution and plot the sample.
+Currently, there are very few R packages which allow us to plot graphs with
+data sets which are stored in a database. One of them is dbplot (Ruiz, 2018), it is
+simple and light-weighted but it is in itâs early development stage. As for survey
+data sets, except for the surveysql package mentioned in section 1.1, there are no
+packages that will allow us to plot data sets with sampling weights without having
+the data sets stored in memory.
+Like the survey package, svydb also provides a set of tools for plotting survey
+data sets and is implemented with ggplot2 (Wickham, 2009), but with less flexibility and options. Similar to the previous chapters, every graphical functions within
+svydb is designed to do as much computation in the database as possible.
+For some type of graphs, it is reasonable to produce them with data sets outside of memory, since to plot them, we donât need the whole data set in memory
+(computing the statistics for the graphs within the database may even be faster than
+transferring the whole data set into memory). For example, plotting a histogram
+with one variable, the only information that are needed to plot it is the location of
+the breaks for the x-axis and the density of the corresponding break for the y-axis.
+Say if there are 30 breaks, then at most, we will only need 60 numbers in memory, 30
+for the breaks and 30 for the density.
+An example of a graph that is not possible to plot without having the whole data
+set in memory is scatter plot, since we will need to know the location of all the points.
+
+22
+
+Chapter 3. Graphics
+
+3.1
+
+Histogram
+
+Traditionally, the heights of each bin for a histogram while plotting the frequency,
+the height of each bin is determined by the number of values that are within the
+ranges of a certain bin, and plotting the density is determined by the proportion of
+data in each bin divided by the width of each bin.
+To calculate the proportions, we first need to determine which bin each value is
+in. To do this we can use the base::cut() and perform svydbmean() on the cuts.
+However this function is not compatible with database tables, therefore a new function db_cut2 was implemented to overcome this difficulty, this will be discussed
+with more detail in section 3.1.4.
+
+3.1.1
+
+Usage
+
+svydbhist(x, design, binwidth = NULL, xlab = "x", ylab = "Density")
+
+3.1.2
+
+Arguments
+
+â¢ x = Name indicating the variable.
+â¢ design = svydb.design object.
+â¢ binwidth = The width of each bin. Binswidths are calculated with Sturgesâ
+formula ref by default, k = [log2 n] + 1..
+â¢ xlab, ylab = labels for xlab and ylab.
+
+3.1.3
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> svydbhist ( x = DirectChol , design = nh . dbsurv ,
+binwidth = 0 . 2 5 )
+
+F IGURE 3.1: svydbhist example
+
+3.1. Histogram
+
+3.1.4
+
+23
+
+Difficulty
+
+1. In R, it is simple to divide numeric columns into intervals by using base::cut(),
+but this function is not supported in SQL. To overcome this problem a new
+function was written, db_cut2, it is designed be compatible with SQL tables
+and is a simple version of base::cut().
+
+24
+
+Chapter 3. Graphics
+
+3.2
+
+Box Plot
+
+Boxplots are based on the quantiles of each variables or groups of variables. Traditionally, by default in R, the boxes of the boxplot only uses the median, 25th percent
+and 75th percent quantile. The ends of the boxplots only extends out to the observations that are within the 1.5 Ã interquantile range, the rest of the observation outside
+this range are plotted as points. In svydbboxplot it is the opposite, due to effiency.
+
+3.2.1
+
+Usage
+
+svydbboxplot(x, groups = NULL, design, varwidth = F, outlier = F)
+
+3.2.2
+
+Arguments
+
+â¢ x, groups = If groups is defined, boxes of x will be split by groups.
+â¢ design = svydb.design object.
+â¢ varwidth = If varwidth = T, the width of the boxes will be proportional to the
+number of observations in that box.
+â¢ outlier = If outlier = T, Any observations above or below the 1.5IQR will be
+plotted as points.
+â¢ all.outlier = TRUE to plot all the outlier points, default FALSE.
+
+3.2.3
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> svydbboxplot ( x = Weight , groups = Race 3 ,
+design = nh . dbsurv , outlier = T ,
+all . outlier = F , varwidth = T )
+
+F IGURE 3.2: svydbboxplot example
+
+3.3. Hexagon Binning
+
+3.3
+
+25
+
+Hexagon Binning
+
+As mentioned in the beginning of this chapter, since survey data sets can be large
+and scatter plots does not work well with large data sets because the points will
+hide or overlap each other. A solution would be to use hexagon binning (Carr et al.,
+1987), group points that are close to each other into a hexagon and use colours or
+sizes of the hexagons to represent the sampling weights of all the points in every
+hexagon. The reasons of using hexagons will not be discussed here, but it is proven
+to be efficient and less biased visually.
+Briefly, the hexagon binning algorithm works as follows,
+1. Figure 3.4 (Page 27) Panel 1 - The red point represents the point to be binned.
+Blue and black points represents the dual lattice, each point represents the corner of each rectangle.
+2. Figure 3.4 (Page 27) Panel 2 - Figure out which rectangles are closest to the red
+point. The intersect of the two rectangles should contain the red point.
+3. Figure 3.4 (Page 27) Panel 3 - Figure out which hexagon the red point should be
+in by calculating the distant between the point and the centres of two hexagons.
+The centre for the blue hexagon is the top left corner of the black rectangle and
+the centre for the black hexagon is the bottom right corner of the blue rectangle.
+4. Repeat for the next point.
+
+3.3.1
+
+Usage/Arguments
+
+To compute the hexagon bins:
+svydbhexbin(formula, design, xbins = 30, shape = 1)
+â¢ f ormula = A formula indicating x and y. i.e. y x.
+â¢ design = svydb.design object.
+â¢ xbins = Number of bins on range of the x-axis.
+â¢ shape = plotting region, shape = height of y/width of x.
+To plot the hexagon bins:
+svydbhexplot(d, xlab = d$xlab, ylab = d$ylab)
+â¢ d = returning object of svydbhexbin().
+â¢ xlab, ylab = labels for x and y axis.
+
+26
+
+Chapter 3. Graphics
+
+3.3.2
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> hb = svydbhexbin ( Height ~ Weight , design = nh . dbsurv )
+> svydbhexplot ( hb )
+
+F IGURE 3.3: svydbhexplot example
+
+3.3.3
+
+Difficulties
+
+1. The original code for hexagon binning in the hexbin R package (Carr et al.,
+2018) used for-loops to run the algorithm, but it is not possible in SQL. Therefore, new columns and extra calculations were needed to overcome this problem. This caused a efficiency problem.
+
+3.3. Hexagon Binning
+
+F IGURE 3.4: Hexagon binning explanation, (Lewin-Koh, 2016)
+
+27
+
+28
+
+Chapter 3. Graphics
+
+3.4
+
+Conditional Plots
+
+Conditional plots in svydb products sets of hexagon binning graphs conditioned by
+the condition given by the user, both x and y axis will remain the same for all graphs.
+Currently it only supports conditions applied on factors.
+
+3.4.1
+
+Function description
+
+The svydbcoplot() function, has three basic arguments,
+svydbcoplot(formula, by, design)
+â¢ f ormula = Formula indicating x and y. i.e. y x.
+â¢ by = Formula indicating the conditions of each plot. i.e by1 by2.
+â¢ design = svydb.design object.
+
+3.4.2
+
+Examples
+
+> nh . dbsurv = svydbdesign ( st = SDMVSTRA , wt = WTMEC 2 YR ,
+id = SDMVPSU , data = nhdb )
+> svydbcoplot ( Age ~ Height , by = SmokeNow ~ Gender ,
+design = nh . dbsurv )
+
+F IGURE 3.5: svydbcoplot example
+
+3.5. Why ggplot?
+
+3.5
+
+29
+
+Why ggplot?
+
+There are several reasons why graphics in svydb is implemented with ggplot2, one
+of them is that ggplot2, dplyr and dbplyr is maintained by the same group of people
+and is a part of a project at Rstudio. Though currently, ggplot2 is only compatible
+with data sets in memory, but it is possible this will change in the future. Another
+reason could be that the user would like to have a interactive plot, this done by
+plotly (Sievert et al., 2017).
+However, the main reason is that it provides more options for the users in terms
+of customising the plots. In base graphics, it would be difficult to customise plots
+when the arguments provided does not include what we want, also it would be difficult for the author to consider all the arguments when creating a function.
+A simple example is that, when a gg or a ggplot object is created,
+> p = ggplot ( mpg , aes ( class , hwy ))
+Customising on the object is just as simple as adding other functions on,
+> p + geom _ boxplot ( varwidth = T ) +
+geom _ jitter ( width = 0 . 2 ) + coord _ flip () +
+ggtitle ( " plot " ) + theme _ bw ()
+
+F IGURE 3.6: Why use ggplot
+
+Or switching the style of the plot is as simple as changing the geom,
+> p + geom _ violin ()
+
+31
+
+Chapter 4
+
+Results
+In this chapter, the time it takes to compute each survey statistics with svydb will be
+tested against the survey package, both data sets in memory (local) and in database
+will be used for svydb. Up to two million observations was tested with data sets
+in memory and up to four million observations for data sets in a data base, data set
+used was The National Health and Nutrition Examination Survey.
+All computation was done with the same computer, specs as follows,
+â¢ MacBook Pro Early 2015
+â¢ Processor 2.7 GHz Intel Core i5
+â¢ Memory 8 GB 1867 MHz DDR3
+â¢ Graphics Intel Iris Graphics 6100 1536 MB
+Data sets from 250,000 to 2,000,000 observations were tested on functions which
+computes replicate survey statistics, up to 4,000,000 observations for other survey
+statistics and graphics. For all the times, please refer to Appendix B.
+Legend on graphs corresponds to,
+â¢ Survey - Survey package on local data sets.
+â¢ svydb.local - svydb on local data sets.
+â¢ svydb.database - svydb package on data sets stored in a database.
+
+32
+
+4.1
+4.1.1
+
+Chapter 4. Results
+
+Total
+Numeric variable
+
+F IGURE 4.1: Population total time comparison - Numeric
+
+4.1.2
+
+Categorical variable with 7 levels
+
+F IGURE 4.2: Population total time comparison - Categorical
+
+4.2. Mean
+
+4.2
+4.2.1
+
+33
+
+Mean
+Numeric variable
+
+F IGURE 4.3: Population mean time comparison - Numeric
+
+4.2.2
+
+Categorical variable with 7 levels
+
+F IGURE 4.4: Population mean time comparison - Categorical
+
+34
+
+4.3
+
+Chapter 4. Results
+
+Regression
+
+F IGURE 4.5: Regression time comparison - 5 variables
+
+4.4
+
+Quantiles
+
+F IGURE 4.6: Median time comparison - Categorical
+
+4.5. Survey Tables
+
+4.5
+
+35
+
+Survey Tables
+
+F IGURE 4.7: Tables time comparison - Categorical
+
+4.6
+
+Total - Replicate Weights
+
+F IGURE 4.8: Replicate total time comparison - Numeric
+
+36
+
+4.7
+
+Chapter 4. Results
+
+Mean - Replicate Weights
+
+F IGURE 4.9: Replicate mean time comparison - Numeric
+
+4.8
+
+Histogram
+
+F IGURE 4.10: Histogram time comparison - Categorical
+
+4.9. Boxplot
+
+4.9
+
+37
+
+Boxplot
+
+F IGURE 4.11: Boxplot time comparison
+
+4.10
+
+Hexagon Binning
+
+F IGURE 4.12: Hexagon Binning time comparison
+
+38
+
+4.11
+
+Chapter 4. Results
+
+Time Comparison
+
+In general, using svydb with local data sets is always faster than both svydb with
+data sets in a database or with the survey package, except for computing the survey
+tables (Figure 4.7) and hexagon binning (Figure 4.12), where the times were similar
+for survey tables and hexagon binning was always about 0.5 seconds slower.
+In terms of data sets in a database, If using svydb with local data sets is faster
+than the survey package then the time it takes to compute survey statistics in a
+database with svydb is predicted to be faster than the survey package if the data
+set is large enough. When the data set gets larger, the increase in time for the survey
+package is almost always larger than svydb. In some cases with data sets up to two
+million observations, svydb is already faster.
+Most of the time we can see that svydb with data sets in memory is the fastest,
+followed by the survey package, and svydb with data sets in a database is always
+the slowest. The reason is that it takes time for the computer to communicate with
+the database, as in telling it what to do and collecting the results. However, if the
+data sets are too large and cannot be fit into memory, svydb would be useful.
+Some functions are just a replicate of another function but with more iterations
+and more features. For example, within svydbboxplot() (Figure 4.11), svydbquantile() (Figure 4.6) is called to obtain the quantiles, svydbhist() (Figure 4.10) calls svydbmean() (Figure 4.3, Figure 4.4) to obtain the proportions of each cut, and svydbreptotal() (Figure 4.8) is computes similar to svydbtotal() (Figure 4.1, Figure 4.2)
+but with more iterations with different sets of weights. Therefore, their computation
+time would be similar across different sizes of data set but with some sort of a scale.
+Regression (Figure 4.5) is the most interesting, though the slope of the line for
+svydb.database seems to be decreasing at 1.75 observations, it is still around 1 to
+1.5 seconds slower than the survey package at the two million observations mark.
+Since matrix operations are not supported in a database, to get the result of a matrix multiplication is to calculate it row by row which would be slow. Therefore
+svydb.database would only be expected to be faster than the survey package if
+the data set is large enough, or if the model contains enough explanatory variables
+which results in a unfeasible matrix operation.
+Though it seems as if svydb is faster in most cases, but the structure of the survey
+package is more complex, and what it can do is outside the capability of svydb, for
+example, handling missing values, post-stratification and log models. It is possible
+that after all the survey package would be faster if it is only computing the survey
+statistics that svydb is computing.
+
+39
+
+Chapter 5
+
+Usability
+5.1
+
+The package
+
+With the help of the devtools package (Wickham, Hester, and Chang, 2018) for package building, the roxygen2 package (Wickham, Danenberg, and Eugster, 2017) for
+package documentation and the formatR (Xie, 2017) package for formatting. The
+full svydb package has been uploaded and can be found on Github, where it also
+includes basic help pages for each functions that computes survey statistics.
+The dependant packages of svydb are,
+â¢ R6 (Chang, 2017)
+â¢ Dplyr (Wickham et al., 2017)
+â¢ Rlang (Henry and Wickham, 2018)
+â¢ Survey (Lumley, 2004)
+â¢ Ggplot2 (Wickham, 2009)
+
+5.2
+
+Supporting functions
+
+Along with the main functions which computes survey statistics, there are also a
+number of other functions that were written to help with the implementation of the
+main functions, testing those functions and to overcome difficulties where there are
+inconsistency in terms of how to query between different types of databases. Details
+of these functions can be found in Appendix ?.
+
+5.3
+
+Testing
+
+Examples within the survey package help page was used to test svydb, all results
+were identical. When examples were not available for certain functions, alternatives
+were used. When data sets are too large, rounding errors will occur and is to be
+expected.
+
+41
+
+Chapter 6
+
+Discussion
+6.1
+
+Overview
+
+The objective of this project is to build a tool in R to compute survey statistics for
+large data sets which cannot be fit into memory and investigate whether it is feasible to do so.
+From the results in chapter 4 we can see that overall, computing survey statistics
+in a database is definitely feasible for certain types of statistics, that is statistics that
+does not require many iterations. It is also possible that other statistics that does
+not heavily depend on statistical or mathematical operations can be computed in a
+database efficiently. Additionally, we have found that dplyr and dbplyr seems to be
+implemented in a very efficient manner.
+
+6.2
+6.2.1
+
+Future work
+Error Messages
+
+More user friendly error messages should be added. Currently while computing
+statistics with svydb, when there is an error in the code, it will only show where the
+error is without any explanations.
+
+6.2.2
+
+Functions
+
+The kernel density smoother was written but it contains many bugs and is very slow,
+this should be completed in a efficient manner. In general, more functions should be
+built into svydb.
+
+43
+
+Appendix A
+
+Codes
+A.1
+
+svydbdesign
+
+makesvydbdesign <- R 6 Class ( " svydb . design " ,
+public = list ( dataOg = NULL ,
+data = NULL , dataSub = NULL ,
+vars = NULL , st = NULL ,
+id = NULL , wt = NULL ,
+call = NULL , names = list () ,
+levels = list () ,
+initialize = function ( vars = NA ,
+st = NA , id = NA , wt = NA , data ) {
+if ( quo _ is _ null ( wt )) {
+stop ( " Please provide sampling weights " )
+} else {
+self $ wt = as . character ( wt )[ 2 ]
+}
+if ( quo _ is _ null ( st )) {
+data = data % >% mutate ( st = 1 )
+self $ st = " st "
+} else {
+self $ st = as . character ( st )[ 2 ]
+}
+if ( quo _ is _ null ( id )) {
+data = data % >% mutate ( id = row _ number ())
+self $ id = " id "
+} else {
+self $ id = as . character ( id )[ 2 ]
+}
+self $ data = data % >% select ( everything ())
+self $ dataOg <<- self $ data
+},
+setx = function ( x ) {
+tc = tryCatch ( class ( x ) , error = function ( e ) e )
+if ( " formula " % in % tc ) {
+x = all . vars ( x )
+self $ data <<- self $ data % >%
+
+44
+
+Appendix A. Codes
+select (!! x , self $ st , self $ id , self $ wt ) % >%
+filter _ all ( any _ vars (! is . na (.)))
+self $ vars <<- x
+} else {
+x = enquo ( x )
+self $ data <<- self $ data % >%
+select (!! x , self $ st , self $ id , self $ wt ) % >%
+filter (! is . na (!! x ))
+self $ vars <<- as . character ( x )[ 2 ]
+}
+self $ names [[ " logged " ]] =
+c ( self $ st , self $ id , self $ wt , " m _ h " )
+},
+addx = function ( x ) {
+l = enquo ( x )
+r = syms ( colnames ( self $ data ))
+self $ data = self $ dataOg % >% select (!! l , !!! r )
+},
+getwt = function () {
+self $ data % >% select ( self $ wt ) % >%
+summarise _ all ( sum ) % >% pull ()
+},
+getmh = function () {
+self $ data % >% group _ by (!! sym ( self $ st )) % >%
+summarise ( m _ h = n _ distinct (!! sym ( self $ id )))
+},
+subset = function (... , logical = T ) {
+d = self $ clone ()
+if ( logical == T ) {
+d $ data = d $ data % >% filter (...)
+} else {
+d $ data = d $ data % >% filter (!! parse _ expr (...))
+}
+return ( d )
+},
+subset _ rows = function ( from , to ) {
+self $ dataSub = self $ data % >%
+db _ selectRows (. , from = from , to = to )
+},
+storename = function ( name , obj , force = FALSE ) {
+if ( force == TRUE ) {
+self $ names $ logged =
+self $ names $ logged [ - which (
+self $ names $ logged % in % obj )]
+}
+if (! all ( obj % in % self $ names $ logged )) {
+new = setdiff ( obj , self $ names $ logged )
+self $ names [[ name ]] = c ( new )
+self $ names $ logged = c ( self $ names $ logged , new )
+}
+
+A.2. svydbtotal
+
+},
+removename = function ( name , obj ) {
+self $ names $ logged =
+self $ names $ logged [ - which (
+self $ names $ logged % in % obj )]
+self $ names [[ name ]] =
+( self $ names [[ name ]])[ - which (
+self $ names [[ name ]] % in % obj )]
+},
+storelevel = function (x , name ) {
+ll = list ( x )
+names ( ll ) = name
+self $ levels = c ( self $ levels , ll )
+},
+storecall = function ( x ) {
+self $ call = x
+},
+print = function () {
+nid = self $ getmh () % >% pull ( m _ h ) % >% sum ()
+rows = self $ data % >% db _ nrow ()
+txt = sprintf ( " svydb . design ,
+% s observation ( s ) , % s Clusters \ n " ,
+rows , nid )
+cat ( txt )
+}))
+svydbdesign = function ( st = NULL , id = NULL ,
+wt = NULL , data ){
+st = enquo ( st )
+id = enquo ( id )
+wt = enquo ( wt )
+d = makesvydbdesign $ new ( st = st , id = id , wt = wt ,
+data = data )
+d $ storecall ( match . call ())
+d
+}
+
+A.2
+
+svydbtotal
+
+svydbtotal = function (x , num , design ,
+return . total = F , ...) {
+if (!( " svydb . design " % in % class ( design ))) {
+stop ( " Please provide a svydb . design " )
+}
+if ( missing ( num )) {
+stop ( " Is x a numeric or categorical variable ?
+, num = T OR num = F ? " )
+
+45
+
+46
+
+Appendix A. Codes
+}
+dsn = design $ clone ()
+dsn $ setx (!! enquo ( x ))
+d = dsn $ data
+dsn $ storename ( " x " , colnames ( d ))
+if ( num == F ) {
+d = dummy _ mut (d , !! sym ( dsn $ names $ x ) , withBase = T )
+}
+dsn $ storename ( " x " , colnames ( d ))
+d = d % >% mutate _ at ( vars ( dsn $ names $ x ) ,
+funs ((. * !! sym ( dsn $ wt )))) % >%
+compute ( temporary = T )
+totTbl = d % >% select ( dsn $ names $ x ) % >%
+summarise _ all ( sum ) % >% collect () % >% t ()
+if ( return . total == TRUE ) {
+colnames ( totTbl ) = " Total "
+return ( totTbl )
+}
+varTbl = d % >% select ( dsn $ st , dsn $ id , dsn $ names $ x ) % >%
+group _ by (!!! syms ( c ( dsn $ st , dsn $ id ))) % >%
+summarise _ at ( vars ( dsn $ names $ x ) ,
+funs ( sum (.))) % >%
+compute ( temporary = T )
+varTbl = inner _ join ( varTbl , dsn $ getmh () , by = dsn $ st )
+barTbl = varTbl % >% select ( - one _ of ( dsn $ id )) % >%
+group _ by (!! sym ( dsn $ st )) % >%
+summarise _ at ( vars ( dsn $ names $ x ) ,
+funs ( bar = sum (./ m _ h )))
+dsn $ storename ( " bar " , colnames ( barTbl ))
+varTbl = inner _ join ( varTbl , barTbl , by = dsn $ st )
+âzhi - zbar â = paste ( dsn $ names $x , " -" ,
+dsn $ names $ bar , collapse = " ; " )
+varTbl = varTbl % >%
+mutate (!!! parse _ exprs ( â zhi - zbar â)) % >%
+ungroup () % >% compute ( temporary = T )
+dsn $ storename ( " diff " , colnames ( varTbl ))
+varTbl = sapply ( dsn $ names $ diff , svydbVar ,
+st = dsn $ st , m _ h = " m _ h " , data = varTbl )
+class ( totTbl ) = " svydbstat "
+attr ( totTbl , " var " ) = varTbl
+attr ( totTbl , " statistic " ) <- " Total "
+attr ( totTbl , " name " ) = dsn $ names $ x
+
+A.3. svydbmean
+
+47
+
+return ( totTbl )
+}
+
+A.3
+
+svydbmean
+
+svydbmean = function (x , num , design ,
+return . mean = F , ...) {
+if (!( " svydb . design " % in % class ( design ))) {
+stop ( " Please provide a svydb . design " )
+}
+if ( missing ( num )) {
+stop ( " Is x a numeric or categorical variable ? ,
+= T OR num = F ? " )
+}
+dsn = design $ clone ()
+dsn $ setx (!! enquo ( x ))
+d = dsn $ data
+dsn $ storename ( " x " , colnames ( d ))
+if ( num == F ) {
+d = dummy _ mut (d , !! sym ( dsn $ names $ x ) , withBase = T )
+}
+dsn $ storename ( " x " , colnames ( d ))
+N = dsn $ getwt ()
+meanTbl = d % >%
+transmute _ at ( vars ( dsn $ names $ x ) ,
+funs ((. * !! sym ( dsn $ wt ))
+/!! quo ( N ))) % >%
+summarise _ all ( sum ) % >%
+compute ( temporary = T ) % >% collect ()
+if ( return . mean == TRUE ) {
+colnames ( meanTbl ) = dsn $ names $ x
+return ( meanTbl )
+}
+dhi _ exprs = paste ( dsn $ names $x , " - " , " meanTbl $ " ,
+dsn $ names $x , sep = " " ,
+collapse = " ; " )
+varTbl = d % >% mutate ( dhi = !!! parse _ exprs ( dhi _ exprs ))
+dsn $ storename ( " dhi " , colnames ( varTbl ))
+varTbl = varTbl % >%
+mutate _ at ( vars ( dsn $ names $ dhi ) ,
+funs ((. * !! sym ( dsn $ wt ))/!! quo ( N ))) % >%
+select ( dsn $ st , dsn $ id ,
+
+48
+
+Appendix A. Codes
+dsn $ names $ dhi )
+barTbl = varTbl % >% select ( dsn $ st , dsn $ names $ dhi ) % >%
+group _ by (!! sym ( dsn $ st )) % >% summarise _ all ( sum )
+barTbl = inner _ join ( barTbl , dsn $ getmh () ,
+by = dsn $ st ) % >%
+mutate _ at ( vars ( dsn $ names $ dhi ) ,
+funs ( bar = ./ m _ h )) % >%
+select ( - one _ of ( dsn $ names $ dhi ))
+dsn $ storename ( " bar " , colnames ( barTbl ))
+varTbl = varTbl % >%
+group _ by (!!! syms ( c ( dsn $ st , dsn $ id ))) % >%
+summarise _ all ( sum ) % >% compute ( temporary = T )
+varTbl = inner _ join ( varTbl , barTbl , by = dsn $ st )
+âdhi - dbar â = paste ( " â" , dsn $ names $ dhi , " â" , " -" ,
+" â" , dsn $ names $ bar , " â" ,
+collapse = " ; " , sep = " " )
+varTbl = varTbl % >%
+mutate (!!! parse _ exprs ( â dhi - dbar â)) % >%
+ungroup () % >% compute ( temporary = T )
+dsn $ storename ( " diff " , colnames ( varTbl ))
+varTbl = sapply ( dsn $ names $ diff , svydbVar ,
+st = dsn $ st , m _ h = " m _ h " , data = varTbl )
+meanTbl = t ( meanTbl )
+class ( meanTbl ) = " svydbstat "
+attr ( meanTbl , " var " ) = varTbl
+attr ( meanTbl , " statistic " ) <- " Mean "
+attr ( meanTbl , " name " ) = dsn $ names $ x
+return ( meanTbl )
+
+}
+
+A.4
+
+svydblm
+
+svydblm = function ( formula , design ) {
+if (!( " svydb . design " % in % class ( design ))) {
+stop ( " Please provide a svydb . design " )
+}
+if ( missing ( formula )) {
+stop ( " Please provide a formula " )
+}
+fit = list ()
+fit $ call = match . call ()
+dsn = design $ clone ()
+dsn $ setx ( formula )
+
+A.4. svydblm
+
+49
+
+d = dsn $ data
+dsn $ storename ( " y " , all . vars ( formula )[ 1 ])
+dsn $ storename ( " variables " , all . vars ( formula )[ - 1 ])
+d = d % >% mutate ( â:= â(!! sym ( dsn $ wt ) ,
+case _ when ( is . na (!! sym ( dsn $ names $ y )) ~
+0 , TRUE ~ !! sym ( dsn $ wt ))))
+d = d % >% mutate ( â:= â(!! sym ( dsn $ names $ y ) ,
+case _ when ( is . na (!! sym ( dsn $ names $ y )) ~
+0 , TRUE ~ !! sym ( dsn $ names $ y ))))
+d = d % >% filter _ all ( all _ vars (! is . na (.)))
+d = d % >% mutate ( intercept = 1 )
+dsn $ storename ( " intercept " , colnames ( d ))
+xy = d
+facVar = attr ( terms ( formula , specials = " factor " ) ,
+" specials " )$ factor
+if (! is . null ( facVar )) {
+facVar = facVar - 1
+dsn $ storename ( " factor " , dsn $ names $ variables [ facVar ] ,
+force = T )
+for ( i in 1 : length ( facVar )) {
+dd = dummy _ mut ( xy , by =
+!! sym ( dsn $ names $ factor [ i ]) ,
+withBase = F , return . level = T )
+xy = dd $ dum
+dsn $ storelevel ( x = dd $ levels ,
+name = dsn $ names $ factor [ i ])
+dsn $ names $ variables = c ( dsn $ names $ variables ,
+dsn $ names $ factor [ i ])
+dsn $ names $ variables =
+dsn $ names $ variables [ -( grep (
+dsn $ names $ factor [ i ] ,
+dsn $ names $ variables )[ 1 ])]
+}
+}
+fit $ terms = terms ( paste ( " ~ " , paste ( dsn $ names $ variables ,
+collapse = " + " )) % >% as . formula )
+dsn $ storename ( " dummy " , colnames ( xy ))
+xy = compute ( xy )
+dsn $ storename ( " variables " , c ( dsn $ names $ variables ,
+dsn $ names $ dummy ) , force = T )
+if (! is . null ( facVar )) {
+dsn $ removename ( " variables " , dsn $ names $ factor )
+}
+db _ xtwx _ i = function (x , col , wt , data ) {
+data = data % >% summarise _ at ( vars ( x ) ,
+funs ( xtx = sum (. * (!! sym ( col )) *
+(!! sym ( wt )))))
+
+50
+
+Appendix A. Codes
+return ( data )
+}
+xtx = lapply ( c ( dsn $ names $ intercept ,
+dsn $ names $ variables ) , db _ xtwx _i ,
+x = c ( dsn $ names $ intercept ,
+dsn $ names $ variables ) , wt = dsn $ wt ,
+data = xy )
+xtx = Reduce ( full _ join , xtx ) % >% collect () % >%
+as . matrix ()
+colnames ( xtx ) =
+c ( dsn $ names $ intercept , dsn $ names $ variables )
+xty = xy % >% transmute _ at ( vars ( dsn $ names $ intercept ,
+dsn $ names $ variables ) , funs (. * (!! sym ( dsn $ wt )) *
+(!! sym ( dsn $ names $ y )))) % >% summarise _ all ( sum ) % >%
+collect () % >% t ()
+xy = xy % >% filter (!(!! sym ( dsn $ wt )) == 0 ) % >%
+compute ()
+beta = solve ( xtx ) %*% xty
+fit $ coefname =
+c ( dsn $ names $ intercept , dsn $ names $ variables )
+fit $ coefficients = beta % >% t ()
+
+dsn $ storename ( " xb " , paste ( dsn $ names $ variables ,
+" _ xb " , sep = " " ))
+e = paste ( dsn $ names $y , " - " , beta [ " intercept " ,
+] , " - " , paste ( rownames ( beta )[ - 1 ] , " * " ,
+beta [ - 1 , ] , sep = " " , collapse = " - " ) ,
+sep = " " )
+xy = xy % >% mutate ( residuals = !! parse _ expr ( e )) % >%
+select ( - one _ of ( dsn $ names $ y ))
+dsn $ storename ( " residuals " , colnames ( xy ))
+res = xy % >% select ( residuals )
+fit $ residuals = res
+varTbl = xy % >% mutate _ at ( vars ( dsn $ names $ intercept ,
+dsn $ names $ variables ) ,
+funs (. * (!! sym ( dsn $ names $ residuals )) *
+(!! sym ( dsn $ wt )))) % >% group _ by (!! sym ( dsn $ st ) ,
+!! sym ( dsn $ id )) % >% summarise _ all ( sum ) % >%
+compute ()
+dsn $ storename ( " zhi " , c ( dsn $ names $ intercept ,
+dsn $ names $ variables ) , force = T )
+barTbl = varTbl % >% select ( dsn $ st , dsn $ names $ zhi ) % >%
+group _ by (!! sym ( dsn $ st )) % >% summarise _ all ( sum )
+mh = dsn $ getmh ()
+barTbl = inner _ join ( barTbl , mh , by = dsn $ st ) % >%
+
+A.5. svydbquantile
+
+51
+
+mutate _ at ( vars ( dsn $ names $ intercept ,
+dsn $ names $ variables ) , funs ( bar = ./ m _ h )) % >%
+compute ()
+dsn $ storename ( " bar " , colnames ( barTbl ))
+varTbl = inner _ join ( varTbl % >% select ( dsn $ st ,
+dsn $ names $ zhi ) , barTbl % >% select ( dsn $ st ,
+dsn $ names $ bar , m _ h ) , by = dsn $ st )
+âzhi - zbar â = paste ( " â" , dsn $ names $ zhi , " â" ,
+" -" , " â" , dsn $ names $ bar , " â" , collapse = " ; " ,
+sep = " " )
+varTbl = varTbl % >%
+mutate (!!! parse _ exprs ( â zhi - zbar â)) % >%
+ungroup () % >% compute ()
+dsn $ storename ( " diff " , colnames ( varTbl ))
+covDiag = sapply ( dsn $ names $ diff , svydbVar ,
+st = dsn $ st , m _ h = " m _ h " , data = varTbl )
+e = outer ( dsn $ names $ diff , dsn $ names $ diff ,
+paste , sep = " ," )
+e = e [ lower . tri ( e )] % >% strsplit (. , " ," )
+covLt = sapply (e , svydbVar 2 , st = dsn $ st ,
+m _ h = " m _ h " , data = varTbl )
+cov . mat = diag ( covDiag )
+cov . mat [ lower . tri ( cov . mat )] = covLt
+cov . mat [ upper . tri ( cov . mat )] =
+t ( cov . mat )[ upper . tri ( cov . mat )]
+fit $ cov . unscaled = solve ( xtx ) %*% cov . mat %*%
+solve ( xtx )
+colnames ( fit $ cov . unscaled ) = rownames ( fit $ cov . unscaled )
+fit $ formula = formula
+fit $ df . residual = sum ( mh % >% select ( m _ h ) % >%
+pull ) - db _ nrow ( mh ) - nrow ( beta ) + 1
+fit $ call = match . call ()
+fit $ design = dsn
+class ( fit ) = c ( " svydblm " , " lm " )
+return ( fit )
+}
+
+A.5
+
+svydbquantile
+
+svydbquantile = function (x , quantiles = 0 . 5 , design ) {
+oldoptions = options ( " survey . lonely . psu " )
+options ( survey . lonely . psu = " adjust " )
+dsn = design $ clone ()
+dsn $ setx (!! enquo ( x ))
+d = dsn $ data
+
+52
+
+Appendix A. Codes
+dsn $ storename ( " x " , colnames ( d ))
+q _ name = quantiles
+qvec = c ()
+b = T
+for ( i in 1 : length ( quantiles )) {
+if ( quantiles [ i ] >= 1 ) {
+qvec [ i ] =
+dbmax ( data = d , var = !! sym ( dsn $ names $ x ))
+} else if ( quantiles [ i ] <= 0 ) {
+qvec [ i ] =
+dbmin ( data = d , var = !! sym ( dsn $ names $ x ))
+} else {
+if ( b ) {
+N = dsn $ getwt ()
+nrowdata = db _ nrow ( d )
+sampN = ceiling ( nrowdata ^( 2 / 3 ))
+d = compute ( d )
+if (! is . null ( d $ src $ con )) {
+sdata = d % >%
+svydb _ monet _ sampleN ( sampN ) % >%
+tbl _ df ()
+} else {
+sdata = d % >% sample _ n ( sampN ) % >%
+tbl _ df ()
+}
+sdata =
+sdata % >% rename ( x = !! sym ( dsn $ names $ x ))
+s . surv = svydesign ( id = c 2 f ( dsn $ id ) ,
+st = c 2 f ( dsn $ st ) , weights = c 2 f ( dsn $ wt ) ,
+data = sdata , nest = T )
+b = F
+}
+notfound = TRUE
+while ( notfound ) {
+q = svyquantile (~ x , s . surv , quantiles [ i ] ,
+alpha = 0 . 1 , ci = TRUE , na . rm = T )
+temp _ lq = q $ CIs [ 1 ]
+temp _ uq = q $ CIs [ 2 ]
+readIn = d % >% select ( x = dsn $ names $x ,
+wt = dsn $ wt ) % >% filter ( x >= temp _ lq &
+x <= temp _ uq )
+readIn _ wts = readIn % >% select ( wt ) % >%
+summarise ( sum ( wt )) % >% pull ()
+notRead = d % >% select ( x = dsn $ names $x ,
+
+A.6. svydbtable
+
+53
+wt = dsn $ wt ) % >% filter ( x < temp _ lq )
+notRead _ wts = notRead % >% select ( wt ) % >%
+summarise ( sum ( wt )) % >% pull ()
+thold = ( N * quantiles [ i ])
+if (( notRead _ wts <= thold ) & ( thold <
+( readIn _ wts + notRead _ wts ))) {
+qs = readIn % >% arrange ( x )
+qs = qs % >% collect () % >%
+mutate ( wt 2 = cumsum ( wt ))
+c _ wts = N * quantiles [ i ] - notRead _ wts
+qs = qs % >%
+filter ( wt 2 >= !! quo ( c _ wts )) % >%
+select ( x ) % >% slice ( 1 ) % >% pull ()
+qvec [ i ] = qs
+notfound = F
+} else {
+if (! is . null ( d $ src $ con )) {
+sdata = d % >%
+svydb _ monet _ sampleN ( sampN ) % >%
+tbl _ df () % >%
+rename ( x = !! sym ( dsn $ names $ x ))
+} else {
+sdata = d % >% sample _ n ( sampN ) % >%
+tbl _ df () % >%
+rename ( x = !! sym ( dsn $ names $ x ))
+}
+s . surv = svydesign ( id = c 2 f ( dsn $ id ) ,
+st = c 2 f ( dsn $ st ) , weights = c 2 f ( dsn $ wt ) ,
+data = sdata , nest = T )
+}
+}
+
+}
+}
+names ( qvec ) = as . character ( q _ name )
+options ( oldoptions )
+return ( qvec )
+}
+
+A.6
+
+svydbtable
+
+svydbtable = function ( formula , design , as . local = F ) {
+dsn = design $ clone ()
+dsn $ setx ( formula )
+d = dsn $ data
+d = d % >% filter _ all ( all _ vars (! is . na (.)))
+dsn $ storename ( " all " , colnames ( d ))
+ff = all . vars ( formula )
+dsn $ storename ( " base " , ff [ 1 ] , force = T )
+
+54
+
+Appendix A. Codes
+
+if ( length ( ff ) == 1 ) {
+out = d % >% group _ by (!! sym ( dsn $ names $ base )) % >%
+summarise ( wt = sum (!! sym ( dsn $ wt ))) % >%
+arrange (!! sym ( dsn $ names $ base ))
+if ( as . local == T ) {
+out = collect ( out )
+}
+return ( out )
+}
+dsn $ storename ( " by " , ff [ 2 ] , force = T )
+d = d % >% select ( dsn $ names $ all , dsn $ wt ) % >%
+dummy _ mut ( data = . , by = !! sym ( dsn $ names $ by ) ,
+withBase = T )
+dsn $ storename ( " dummy " , colnames ( d ))
+d = d % >% select ( - one _ of ( dsn $ names $ by ))
+d = compute ( d )
+if ( length ( ff ) == 2 ) {
+out = d % >% group _ by (!! sym ( dsn $ names $ base )) % >%
+summarise _ at ( vars ( dsn $ names $ dummy ) ,
+funs ( sum (. * (!! sym ( dsn $ wt ))))) % >%
+arrange (!! sym ( dsn $ names $ base ))
+if ( as . local == T ) {
+out = collect ( out )
+}
+return ( out )
+}
+dsn $ storename ( " others " , ff [ - c ( 1 , 2 )] , force = T )
+combnTbl = d % >% select ( dsn $ names $ others ) % >%
+distinct () % >%
+arrange (!!! syms ( dsn $ names $ others )) % >%
+collect ()
+combnLst = split ( combnTbl , seq ( 1 , nrow ( combnTbl )))
+sTbls = function ( by ) {
+nname = paste ( colnames ( by ) , " = " , by ,
+collapse = " & " )
+con = gsub ( pattern = " = " , replacement = " == " ,
+nname )
+d = d % >% filter (!! parse _ expr ( con )) % >%
+select ( - one _ of ( colnames ( by ))) % >%
+group _ by (!! sym ( dsn $ names $ base )) % >%
+summarise _ at ( vars ( dsn $ names $ dummy ) ,
+funs ( sum (. * (!! sym ( dsn $ wt ))))) % >%
+arrange (!! sym ( dsn $ names $ base )) % >%
+list (.)
+names ( d ) = nname
+d
+
+A.7. svydbby
+}
+out = lapply ( combnLst , sTbls ) % >% flatten ()
+if ( as . local == T ) {
+out = lapply ( out , collect )
+}
+return ( out )
+}
+
+A.7
+
+svydbby
+
+svydbtable = function ( formula , design , as . local = F ) {
+dsn = design $ clone ()
+dsn $ setx ( formula )
+d = dsn $ data
+d = d % >% filter _ all ( all _ vars (! is . na (.)))
+dsn $ storename ( " all " , colnames ( d ))
+ff = all . vars ( formula )
+dsn $ storename ( " base " , ff [ 1 ] , force = T )
+if ( length ( ff ) == 1 ) {
+out = d % >% group _ by (!! sym ( dsn $ names $ base )) % >%
+summarise ( wt = sum (!! sym ( dsn $ wt ))) % >%
+arrange (!! sym ( dsn $ names $ base ))
+if ( as . local == T ) {
+out = collect ( out )
+}
+return ( out )
+}
+dsn $ storename ( " by " , ff [ 2 ] , force = T )
+d = d % >% select ( dsn $ names $ all , dsn $ wt ) % >%
+dummy _ mut ( data = . , by = !! sym ( dsn $ names $ by ) ,
+withBase = T )
+dsn $ storename ( " dummy " , colnames ( d ))
+d = d % >% select ( - one _ of ( dsn $ names $ by ))
+d = compute ( d )
+if ( length ( ff ) == 2 ) {
+out = d % >% group _ by (!! sym ( dsn $ names $ base )) % >%
+summarise _ at ( vars ( dsn $ names $ dummy ) ,
+funs ( sum (. * (!! sym ( dsn $ wt ))))) % >%
+arrange (!! sym ( dsn $ names $ base ))
+if ( as . local == T ) {
+out = collect ( out )
+}
+return ( out )
+}
+
+55
+
+56
+
+Appendix A. Codes
+
+dsn $ storename ( " others " , ff [ - c ( 1 , 2 )] , force = T )
+combnTbl = d % >% select ( dsn $ names $ others ) % >%
+distinct () % >%
+arrange (!!! syms ( dsn $ names $ others )) % >%
+collect ()
+combnLst = split ( combnTbl , seq ( 1 , nrow ( combnTbl )))
+sTbls = function ( by ) {
+nname = paste ( colnames ( by ) , " = " , by ,
+collapse = " & " )
+con = gsub ( pattern = " = " , replacement = " == " ,
+nname )
+d = d % >% filter (!! parse _ expr ( con )) % >%
+select ( - one _ of ( colnames ( by ))) % >%
+group _ by (!! sym ( dsn $ names $ base )) % >%
+summarise _ at ( vars ( dsn $ names $ dummy ) ,
+funs ( sum (. * (!! sym ( dsn $ wt ))))) % >%
+arrange (!! sym ( dsn $ names $ base )) % >%
+list (.)
+names ( d ) = nname
+d
+}
+out = lapply ( combnLst , sTbls ) % >% flatten ()
+if ( as . local == T ) {
+out = lapply ( out , collect )
+}
+return ( out )
+}
+
+A.8
+
+svydbrepdesign
+
+makesvydbrepdesign <- R 6 Class ( " svydb . repdesign " ,
+public = list ( dataOg = NULL , data = NULL ,
+vars = NULL , st = NULL , id = NULL , wt = NULL ,
+repwt = NULL , scale = NULL , names = list () ,
+initialize = function ( vars = NA , st = NA ,
+id = NA , wt = NA , repwt = NULL , scale ,
+data ) {
+if ( quo _ is _ null ( wt )) {
+stop ( " Please provide sampling weights " )
+} else {
+self $ wt = as . character ( wt )[ 2 ]
+}
+if ( is . null ( repwt )) {
+stop ( " Please provide replicate weights " )
+} else {
+
+A.8. svydbrepdesign
+
+57
+self $ repwt = grep ( pattern = repwt ,
+colnames ( data ) , value = T )
+
+}
+if ( quo _ is _ null ( st )) {
+data = data % >% mutate ( st = 1 )
+self $ st = " st "
+} else {
+self $ st = as . character ( st )[ 2 ]
+}
+if ( quo _ is _ null ( id )) {
+data = data % >% mutate ( id = row _ number ())
+self $ id = " id "
+} else {
+self $ id = as . character ( id )[ 2 ]
+}
+self $ scale = scale
+self $ data = data % >% select ( everything ())
+self $ dataOg <<- self $ data
+} , setx = function ( x ) {
+tc = tryCatch ( class ( x ) , error = function ( e ) e )
+if ( " formula " % in % tc ) {
+x = all . vars ( x )
+self $ data <<- self $ data % >% select (!! x ,
+st = self $ st , id = self $ id ,
+self $ wt , self $ repwt ) % >%
+filter _ all ( any _ vars (! is . na (.)))
+self $ vars <<- x
+} else {
+x = enquo ( x )
+self $ data <<- self $ data % >% select (!! x ,
+st = self $ st , id = self $ id ,
+self $ wt , self $ repwt ) % >%
+filter (! is . na (!! x ))
+self $ vars <<- as . character ( x )[ 2 ]
+}
+self $ names [[ " logged " ]] = c ( self $ st ,
+self $ id , self $ wt , self $ repwt ,
+"m_h")
+} , addx = function ( x ) {
+l = enquo ( x )
+r = syms ( colnames ( self $ data ))
+self $ data = self $ dataOg % >% select (!! l ,
+!!! r )
+} , getwt = function () {
+self $ data % >% select ( self $ wt ) % >%
+summarise _ all ( sum ) % >% pull ()
+} , getmh = function () {
+self $ data % >% group _ by (!! sym ( self $ st )) % >%
+
+58
+
+Appendix A. Codes
+summarise ( m _ h = n _ distinct (!! sym ( self $ id )))
+} , subset = function (... , logical = T ) {
+d = self $ clone ()
+if ( logical == T ) {
+d $ data = d $ data % >% filter (...)
+} else {
+d $ data = d $ data % >%
+filter (!! parse _ expr (...))
+}
+return ( d )
+} , subset _ rows = function ( from , to ) {
+self $ dataSub = self $ data % >% db _ selectRows (. ,
+from = from , to = to )
+} , storename = function ( name , obj , force = FALSE ) {
+if ( force == TRUE ) {
+self $ names $ logged =
+self $ names $ logged [ - which (
+self $ names $ logged % in % obj )]
+}
+if (! all ( obj % in % self $ names $ logged )) {
+new = setdiff ( obj , self $ names $ logged )
+self $ names [[ name ]] = c ( new )
+self $ names $ logged = c ( self $ names $ logged ,
+new )
+}
+} , removename = function ( name , obj ) {
+self $ names $ logged =
+self $ names $ logged [ - which (
+self $ names $ logged % in % obj )]
+self $ names [[ name ]] =
+( self $ names [[ name ]])[ - which (
+self $ names [[ name ]] % in % obj )]
+} , print = function () {
+rows = self $ data % >% db _ nrow ()
+txt = sprintf ( " svydb . repdesign ,
+% s observation ( s ) , % s sets of
+replicate weights , scale = % s " ,
+rows , length ( self $ repwt ) , self $ scale )
+cat ( txt )
+
+}))
+svydbrepdesign = function ( st = NULL , id = NULL ,
+wt = NULL , repwt = NULL , scale , data ) {
+st = enquo ( st )
+id = enquo ( id )
+wt = enquo ( wt )
+d = makesvydbrepdesign $ new ( st = st , id = id ,
+wt = wt , repwt = repwt , scale = scale ,
+data = data )
+d
+
+A.9. svydbreptotal
+
+59
+
+}
+
+A.9
+
+svydbreptotal
+
+svydbreptotal = function (x , design ,
+num , return . replicates = F ) {
+x = enquo ( x )
+if (!( " svydb . repdesign " % in % class ( design ))) {
+stop ( " Please provide a svydb . repdesign " )
+}
+if ( missing ( num )) {
+stop ( " Is x a numeric or categorical variable ? ,
+num = T OR num = F ? " )
+}
+dsn = design $ clone ()
+dsn $ setx (!! enquo ( x ))
+d = dsn $ data
+dsn $ storename ( " x " , colnames ( d ))
+if ( num == F ) {
+d = dummy _ mut (d , !! sym ( dsn $ names $ x ) , withBase = T )
+}
+dsn $ storename ( " x " , colnames ( d ))
+fullTotTbl = d % >% summarise _ at ( vars ( dsn $ names $ x ) ,
+funs ( sum (. * (!! sym ( dsn $ wt ))))) % >% collect ()
+cnt = 1
+getRepTots = function ( names , fullTot ) {
+replicates = d % >% summarise _ at ( vars ( dsn $ repwt ) ,
+funs ( sum ((. * !! sym ( names ))))) % >%
+collect ()
+repTot = replicates % >% summarise _ all ( funs ((. !! quo ( fullTot [ cnt ]))^ 2 ))
+cnt <<- cnt + 1
+if ( return . replicates == T ) {
+list ( replicates = replicates ,
+repVar = db _ rowSums ( repTot ) % >%
+transmute _ all (
+funs (. * !! quo ( dsn $ scale ))) % >%
+collect ())
+} else {
+list ( repVar = db _ rowSums ( repTot ) % >%
+transmute _ all ( funs (. *
+!! quo ( dsn $ scale ))) % >%
+
+60
+
+Appendix A. Codes
+collect ())
+}
+}
+ans = lapply ( colnames ( fullTotTbl ) , getRepTots ,
+fullTot = as . vector ( t ( fullTotTbl )))
+repVar = lapply ( ans , function ( x ) x $ repVar ) % >%
+Reduce ( rbind , .) % >% pull ()
+tot = fullTotTbl % >% t () % >% as . vector ()
+attr ( tot , " var " ) = repVar
+attr ( tot , " statistic " ) <- " Total "
+attr ( tot , " name " ) = dsn $ names $ x
+if ( return . replicates == T ) {
+replicates =
+lapply ( ans , function ( x ) x $ replicates % >%
+collect ()) % >% Reduce ( rbind , .)
+tot = list ( svydbrepstat = tot ,
+replicates = replicates )
+}
+class ( tot ) = c ( " svydbrepstat " )
+return ( tot )
+
+}
+
+A.10
+
+svydbrepmean
+
+svydbrepmean = function (x , design , num ,
+return . replicates = F ) {
+x = enquo ( x )
+if (!( " svydb . repdesign " % in % class ( design ))) {
+stop ( " Please provide a svydb . repdesign " )
+}
+if ( missing ( num )) {
+stop ( " Is x a numeric or categorical variable ? ,
+num = T OR num = F ? " )
+}
+dsn = design $ clone ()
+dsn $ setx (!! enquo ( x ))
+d = dsn $ data
+dsn $ storename ( " x " , colnames ( d ))
+if ( num == F ) {
+d = dummy _ mut (d , !! sym ( dsn $ names $ x ) , withBase = T )
+}
+
+A.10. svydbrepmean
+dsn $ storename ( " x " , colnames ( d ))
+N = dsn $ getwt ()
+fullMeanTbl = d % >% summarise _ at ( vars ( dsn $ names $ x ) ,
+funs ( sum (. * (!! sym ( dsn $ wt )))/!! quo ( N ))) % >%
+collect ()
+repN = d % >% select ( dsn $ repwt ) % >%
+summarise _ all ( sum ) % >%
+collect ()
+repN = paste ( colnames ( repN ) , " / " , repN ,
+collapse = " ; " )
+cnt = 1
+getRepTots = function ( names , fullMean ) {
+replicates = d % >% summarise _ at ( vars ( dsn $ repwt ) ,
+funs ( sum (. * !! sym ( names )))) % >%
+transmute (!!! parse _ exprs ( repN )) % >%
+compute ()
+repMean = replicates % >% summarise _ all ( funs ((. !! quo ( fullMean [ cnt ]))^ 2 ))
+cnt <<- cnt + 1
+if ( return . replicates == T ) {
+list ( replicates = replicates ,
+repVar = db _ rowSums ( repMean ) % >%
+transmute _ all ( funs (. *
+!! quo ( dsn $ scale ))) % >%
+collect ())
+} else {
+list ( repVar = db _ rowSums ( repMean ) % >%
+transmute _ all ( funs (. *
+!! quo ( dsn $ scale ))) % >%
+collect ())
+}
+}
+ans = lapply ( colnames ( fullMeanTbl ) , getRepTots ,
+fullMean = as . vector ( t ( fullMeanTbl )))
+repVar = lapply ( ans , function ( x ) x $ repVar ) % >%
+Reduce ( rbind , .) % >% pull ()
+means = fullMeanTbl % >% t () % >% as . vector ()
+attr ( means , " var " ) = repVar
+attr ( means , " statistic " ) <- " Mean "
+attr ( means , " name " ) = dsn $ names $ x
+if ( return . replicates == T ) {
+replicates = lapply ( ans , function ( x )
+x $ replicates % >%
+collect ()) % >% Reduce ( rbind , .)
+means = list ( svydbrepstat = means ,
+replicates = replicates )
+}
+
+61
+
+62
+
+Appendix A. Codes
+class ( means ) = c ( " svydbrepstat " )
+return ( means )
+
+}
+
+A.11
+
+svydbhist
+
+svydbhist = function (x , design , binwidth = NULL ,
+xlab = " x " , ylab = " Density " , ...) {
+if (!( " svydb . design " % in % class ( design ))) {
+stop ( " Please provide a svydb . design " )
+}
+dsn = design $ clone ()
+dsn $ setx (!! enquo ( x ))
+d = dsn $ data
+dsn $ storename ( " x " , colnames ( d ))
+d _ n = d % >% db _ nrow ()
+x _ max = d % >% dbmax (!! sym ( dsn $ names $ x ) , asNum = T )
+x _ min = d % >% dbmin (!! sym ( dsn $ names $ x ) , asNum = T )
+x _ range = x _ max - x _ min
+if ( is . null ( binwidth )) {
+binwidth = ceiling ( log 2 ( d _ n ) + 1 )
+pbreaks = pretty ( c ( x _ min , x _ max ) , n = binwidth ,
+min . n = 1 )
+} else {
+pbreaks = seq ( from = floor ( x _ min ) ,
+to = ceiling ( x _ max ) ,
+by = binwidth )
+}
+d = db _ cut 2 ( var = !! sym ( dsn $ names $ x ) , breaks = pbreaks ,
+data = d ) % >% arrange ( cut )
+dsn $ data = d
+props = svydbmean ( x = cut , design = dsn , num = F ,
+return . mean = T ) % >% collect () % >% t ()
+colnames ( props ) = " Mean "
+mids = pbreaks [ - length ( pbreaks )] + diff ( pbreaks )/ 2
+if ( length ( mids ) != nrow ( props )) {
+props = tbl _ df ( props ) % >%
+mutate ( uqid = row _ number ())
+d = left _ join ( mids % >% tbl _ df () % >%
+mutate ( uqid = row _ number ()) ,
+props , by = " uqid " )
+d = d % >% mutate ( Mean = case _ when ( is . na ( Mean ) ~
+0 , TRUE ~ Mean )) % >% select ( - uqid )
+
+A.12. svydbboxplot
+} else {
+d = cbind ( mids , props ) % >% tbl _ df ()
+}
+colnames ( d ) = c ( " x " , " y " )
+d $ y = d $ y / diff ( pbreaks )
+p = ggplot ( d ) + geom _ col ( aes (x , y )) +
+labs ( x = dsn $ names $x , y = ylab )
+print ( p )
+invisible ( p )
+}
+
+A.12
+
+svydbboxplot
+
+svydbboxplot = function (x , groups = NULL , design ,
+varwidth = F , outlier = F , all . outlier = F ) {
+groups = enquo ( groups )
+dsn = design $ clone ()
+dsn $ setx (!! enquo ( x ))
+d = dsn $ data
+dsn $ storename ( " x " , colnames ( d ))
+if ( quo _ is _ null ( groups )) {
+boxes = svydbquantile ( x = !! sym ( dsn $ names $ x ) ,
+quantile = c ( 0 , 0 . 2 5 , 0 . 5 , 0 . 7 5 , 1 ) ,
+design = dsn ) % >% t () % >% tbl _ df () % >%
+mutate ( " " )
+ax = c ( x = " " , y = dsn $ names $ x )
+colnames ( boxes ) = c ( as . character ( letters [ 1 : 5 ]) ,
+"x")
+} else {
+group _ name = as . character ( groups )[ 2 ]
+dsn $ addx ( group _ name )
+d = dsn $ data
+dsn $ storename ( " groups " , colnames ( d ))
+group _ levels = distinct (d ,
+!! sym ( dsn $ names $ groups )) % >%
+collect ()
+group _ names = paste ( colnames ( group _ levels ) ,
+pull ( group _ levels ) , sep = " " )
+group _ names 2 = paste ( colnames ( group _ levels ) ,
+paste ( " â" , pull ( group _ levels ) , " â" ,
+sep = " " ) , sep = " " )
+f = function ( x ) {
+svydbquantile ( x = !! sym ( dsn $ names $ x ) ,
+quantile = c ( 0 , 0 . 2 5 , 0 . 5 , 0 . 7 5 ,
+
+63
+
+64
+
+Appendix A. Codes
+1 ) , design = dsn $ subset (x , logical = F ))
+}
+boxes = sapply ( gsub ( pattern = " " ,
+replacement = " == " , x = ,
+group _ names 2 ) , f )
+boxes = t ( boxes ) % >% tbl _ df () % >%
+bind _ cols ( group _ levels )
+ax = c ( x = dsn $ names $ groups , y = dsn $ names $ x )
+colnames ( boxes ) = c ( as . character ( letters [ 1 : 5 ]) ,
+"x")
+boxes $ x = as . character ( boxes $ x )
+}
+haveOut = F
+if ( outlier == T ) {
+boxes = boxes % >% mutate ( outUP = d + 1 . 5 *
+( d - b ) , checkUP = ifelse ( outUP <
+e , T , F ) , outLow = b - 1 . 5 * ( d b ) , checkLow = ifelse ( outLow > a ,
+T , F ))
+if ( any ( boxes $ checkLow ) == T ) {
+haveOut = T
+boxes = boxes % >% mutate ( a = ifelse ( checkLow ==
+T , outLow , a ))
+outls = paste ( gsub ( pattern = " " ,
+replacement = " == " , x = group _ names 2 ) ,
+" & " , dsn $ names $x , " <" , boxes $a ,
+collapse = " | " )
+outlsLow = d % >%
+filter (!!! parse _ exprs ( outls )) % >%
+select ( x = dsn $ names $ groups ,
+y = dsn $ names $ x ) % >%
+mutate ( x = as . character ( x ))
+if ( all . outlier == F ) {
+outlsLow = outlsLow % >% group _ by ( x ) % >%
+summarise ( y = min ( y ))
+}
+outlsLow = outlsLow % >% tbl _ df ()
+}
+if ( any ( boxes $ checkUP ) == T ) {
+haveOut = T
+boxes = boxes % >% mutate ( e = ifelse ( checkUP ==
+T , outUP , e ))
+outls = paste ( gsub ( pattern = " " ,
+replacement = " == " , x = group _ names 2 ) ,
+" & " , dsn $ names $x , " >" , boxes $e ,
+collapse = " | " )
+outlsUP = d % >%
+filter (!!! parse _ exprs ( outls )) % >%
+
+A.13. svydbhexbin, svydbhexplot
+select ( x = dsn $ names $ groups ,
+y = dsn $ names $ x ) % >%
+mutate ( x = as . character ( x ))
+if ( all . outlier == F ) {
+outlsUP = outlsUP % >% group _ by ( x ) % >%
+summarise ( y = max ( y ))
+}
+outlsUP = outlsUP % >% tbl _ df ()
+}
+outls = bind _ rows ( outlsUP , outlsLow )
+}
+p = ggplot ( boxes ) + labs ( x = ax [ " x " ] , y = ax [ " y " ])
+if ( varwidth == T ) {
+boxwid = d % >%
+group _ by (!! sym ( dsn $ names $ groups )) % >%
+summarise ( wid = n ()) % >% collect ()
+p $ data = p $ data % >%
+mutate ( width = ( boxwid $ wid / sum ( boxwid $ wid )))
+p = p + geom _ boxplot ( aes ( x = as . factor ( x ) ,
+ymin = a , lower = b , middle = c , upper = d ,
+ymax = e , width = width ) , stat = " identity " )
+} else {
+p = p + geom _ boxplot ( aes ( x = as . factor ( x ) ,
+ymin = a , lower = b , middle = c , upper = d ,
+ymax = e ) , stat = " identity " )
+}
+if ( haveOut == T ) {
+p = p + geom _ point ( data = outls , aes ( x = x ,
+y = y ))
+}
+print ( p )
+return ( p )
+}
+
+A.13
+
+svydbhexbin, svydbhexplot
+
+svydbhcell 2 xy = function ( d ) {
+xbins = d $ xbins
+xbnds = d $ xbnds
+c 3 = diff ( xbnds )/ xbins
+ybnds = d $ ybnds
+c 4 = ( diff ( ybnds ) * sqrt ( 3 ))/( 2 * d $ shape *
+xbins )
+jmax = d $ dimen [ 2 ]
+cell = d $ cell - 1
+
+65
+
+66
+
+Appendix A. Codes
+i
+j
+y
+x
+
+=
+=
+=
+=
+
+cell %/% jmax
+cell %% jmax
+c 4 * i + ybnds [ 1 ]
+c 3 * ifelse ( i %% 2 == 0 , j , j + 0 . 5 ) + xbnds [ 1 ]
+
+return ( list ( x = x , y = y ))
+}
+
+svydbhbin = function ( xy , x , y , xName , yName , cell ,
+cnt , xcm , ycm , size , shape , rx , ry , bnd , n ) {
+xmin = rx [ 1 ]
+ymin = ry [ 1 ]
+xr = rx [ 2 ] - xmin
+yr = ry [ 2 ] - ymin
+c 1 = size / xr
+c 2 = size * shape /( yr * sqrt ( 3 ))
+jinc = floor ( bnd [ 2 ])
+lat = floor ( jinc + 1 )
+iinc = floor ( 2 * jinc )
+lmax = floor ( bnd [ 1 ] * as . integer ( bnd [ 2 ]))
+con 1 = 0 . 2 5
+con 2 = 1 / 3
+xy = xy % >% mutate ( sx = !! quo ( c 1 ) , sy = !! quo ( c 2 ) ,
+xmin = !! quo ( xmin ) , ymin = !! quo ( ymin ))
+xy = xy % >% mutate ( sx = sx * ( x - xmin ))
+xy = xy % >% mutate ( sy = sy * ( y - ymin ))
+xy = xy % >% mutate ( j 1 = floor ( sx + 0 . 5 ) ,
+i 1 = floor ( sy + 0 . 5 ))
+xy = xy % >% mutate ( dist 1 = ( sx - j 1 )^ 2 + 3 *
+( sy - i 1 )^ 2 , iinc = !! quo ( iinc ) , lat = !! quo ( lat ))
+xy = xy % >% mutate ( con 1 = !! quo ( con 1 ) ,
+con 2 = !! quo ( con 2 ) , j 2 = floor ( sx ) ,
+i 2 = floor ( sy ))
+xy = xy % >% mutate ( con 3 = ( sx - j 2 - 0 . 5 )^ 2 +
+3 * ( sy - i 2 - 0 . 5 )^ 2 )
+xy = xy % >% mutate ( L = case _ when ( dist 1 < con 1 ~
+floor ( i 1 * iinc + j 1 + 1 ) , dist 1 > con 2 ~
+floor ( floor ( sy ) * iinc + floor ( as . double ( sx )) +
+lat ) , TRUE ~ case _ when ( dist 1 <= con 3 ~
+floor ( i 1 * iinc + j 1 + 1 ) , TRUE ~ floor ( i 2 *
+iinc + j 2 + lat ))))
+Lfulltbl = xy % >% select (x , y , L )
+cmsTbl = Lfulltbl % >% group _ by ( L ) % >%
+summarise ( xcm = mean ( x ) , ycm = mean ( y )) % >%
+arrange ( L ) % >% select ( - L ) % >%
+collect ()
+Ltbl = xy % >% select ( L 2 = L , wt ) % >% group _ by ( L 2 ) % >%
+
+A.13. svydbhexbin, svydbhexplot
+
+67
+
+summarise ( cnt = sum ( wt ))
+xy = xy % >% select (x , y ) % >% mutate ( L 2 = row _ number ())
+xy = left _ join ( xy , Ltbl , by = " L 2 " ) % >%
+mutate ( cnt = case _ when ( is . na ( cnt ) ~
+0 , TRUE ~ cnt )) % >%
+arrange ( L 2 )
+cntsTbl = xy % >% rename ( cell = L 2 ) % >%
+mutate ( lt 1 = case _ when ( cnt > 0 ~ 1 , TRUE ~ 0 )) % >%
+filter ( lt 1 == 1 ) % >%
+select ( - lt 1 ) % >% collect ()
+out = list ( cell = cntsTbl $ cell , count = cntsTbl $ cnt ,
+xcm = cmsTbl $ xcm , ycm = cmsTbl $ ycm , xbins = size ,
+shape = shape , xbnds = rx , ybnds = ry ,
+dimen = bnd , n = n , ncells = nrow ( cntsTbl ) ,
+xlab = xName , ylab = yName )
+xy = svydbhcell 2 xy ( out )
+out = c ( xy , out )
+return ( out )
+}
+svydbhexbin = function ( formula , design , xbins = 3 0 ,
+shape = 1 ) {
+dsn = design $ clone ()
+dsn $ setx ( formula )
+dsn $ storename ( " y " , all . vars ( formula )[ 1 ])
+dsn $ storename ( " x " , all . vars ( formula )[ - 1 ])
+d = dsn $ data
+d = d % >% rename ( x = !! sym ( dsn $ names $ x )) % >%
+rename ( y = !! sym ( dsn $ names $ y )) % >%
+rename ( wt = !! sym ( dsn $ wt )) % >%
+filter (! is . na ( x )) % >% filter (! is . na ( y ))
+d = compute ( d )
+n = d % >% db _ nrow ()
+x = d % >% select ( x )
+y = d % >% select ( y )
+xbnds = c ( dbmin (d , x ) , dbmax (d , x ))
+ybnds = c ( dbmin (d , y ) , dbmax (d , y ))
+jmax
+c1 =
+imax
+lmax
+
+=
+2
+=
+=
+
+floor ( xbins + 1 . 5 0 0 1 )
+* floor (( xbins * shape )/ sqrt ( 3 ) + 1 . 5 0 0 1 )
+trunc (( jmax * c 1 - 1 )/ jmax + 1 )
+jmax * imax
+
+ans = svydbhbin ( xy = d , x = x , y = y ,
+xName = dsn $ names $x , yName = dsn $ names $y ,
+cell = as . integer ( lmax ) , cnt = as . integer ( lmax ) ,
+
+68
+
+Appendix A. Codes
+xcm = as . integer ( lmax ) , ycm = as . integer ( lmax ) ,
+size = xbins , shape = shape ,
+rx = as . double ( xbnds ) , ry = as . double ( ybnds ) ,
+bnd = as . integer ( c ( imax , jmax )) , n = n )
+return ( ans )
+
+}
+svydbhexplot = function (d , xlab = d $ xlab , ylab = d $ ylab ) {
+pdata = tibble ( x = d $x , y = d $y , count = d $ count ,
+xcm = d $ xcm , ycm = d $ ycm )
+p = ggplot ( pdata ) + geom _ hex ( aes ( x = x , y = y ,
+fill = count ) ,
+color = " black " , stat = " identity " ) +
+labs ( x = xlab , y = ylab ) +
+scale _ fill _ continuous ( trans = " reverse " )
+print ( p )
+invisible ( p )
+}
+
+A.14
+
+svydbcoplot
+
+svydbcoplot = function ( formula , by , design ) {
+if (! is _ formula ( by )) {
+stop ( " by must be a formula " )
+}
+y = all . vars ( formula )[ 1 ]
+x = all . vars ( formula )[ - 1 ]
+dsn = design $ clone ()
+by _ var = all . vars ( by )
+by = dsn $ data % >% select (!!! syms ( by _ var )) % >%
+distinct () % >% arrange (!! sym ( by _ var [ 1 ])) % >%
+collect ()
+by = split ( by , seq ( nrow ( by )))
+filterData = function ( by , dsn , x , y ) {
+dsn = dsn $ subset ( paste ( colnames ( by ) , " == " ,
+by , collapse = " & " ) , logical = F )
+hb = svydbhexbin ( formula , design = dsn )
+if ( length ( hb $ x ) | length ( hb $ y )
+| length ( hb $ count ) != 0 ) {
+cbind ( tibble ( x = hb $x , y =
+hb $y , count = hb $ count ) , by )
+}
+}
+
+A.15. Other Functions
+p = lapply ( by , filterData , dsn = dsn ) % >%
+Reduce ( rbind , .)
+p = ggplot ( p ) + geom _ hex ( aes ( x = x , y = y ,
+fill = count ) ,
+color = " black " , stat = " identity " ) +
+labs ( x = x , y = y ) +
+scale _ fill _ continuous ( trans = " reverse " ) +
+facet _ wrap ( by _ var , labeller = " label _ both " )
+print ( p )
+invisible ( p )
+}
+
+A.15
+
+Other Functions
+
+dbmin = function ( data , var , asNum = T ) {
+var = enquo ( var )
+data = data % >% ungroup () % >% select (!! var ) % >%
+summarise ( min = min (!! var ))
+if ( asNum == T ) {
+data % >% pull
+} else {
+data
+}
+}
+dbmax = function ( data , var , asNum = T ) {
+var = enquo ( var )
+data = data % >% ungroup () % >% select (!! var ) % >%
+summarise ( max = max (!! var ))
+if ( asNum == T ) {
+data % >% pull
+} else {
+data
+}
+}
+db _ nrow = function ( data ) {
+data % >% ungroup () % >% count () % >% pull ()
+}
+db _ dim = function ( data ) {
+n _ rows = data % >% ungroup () % >% count () % >%
+pull ()
+n _ cols = ncol ( data )
+out = c ( n _ rows , n _ cols )
+names ( out ) = c ( " rows " , " cols " )
+out
+
+69
+
+70
+
+Appendix A. Codes
+
+}
+db _ view = function ( data , num = 1 ) {
+if ( class ( data ) == " list " ) {
+View ( data [[ num ]] % >% tbl _ df ())
+} else {
+View ( data % >% tbl _ df )
+}
+}
+db _ rowSums _ mut = function ( data , vars = NULL ,
+newRowName = " rSum " ) {
+if ( is . null ( vars )) {
+s = paste ( colnames ( data ) , collapse = " + " )
+} else {
+s = paste ( vars , collapse = " + " )
+}
+q = quote ( mutate ( data , rSum = s ))
+eval ( parse ( text = sub ( " rSum " , newRowName ,
+sub ( " s " , s , deparse ( q )))))
+}
+db _ rowSums = function ( data ) {
+cn = colnames ( data )
+rs = paste ( " â" , cn , " â" , sep = " " , collapse = " + " )
+data % >% transmute ( rowsum = !! parse _ expr ( rs ))
+}
+db _ cbind = function (x , y ) {
+x = x % >% mutate ( â___ i â = " key " )
+y = y % >% mutate ( â___ i â = " key " )
+out = inner _ join (x , y , by = " ___ i " , copy = T ) % >%
+select ( - â___ i â)
+return ( out )
+}
+db _ slice = function ( data , n ) {
+n = enquo ( n )
+data % >% mutate ( â___ i â = row _ number ()) % >%
+filter ( â___ i â <= !! n ) % >% select ( - â___ i â)
+}
+dummy _ mut = function ( data , by , withBase = T ,
+return . level = F ) {
+by = enquo ( by )
+dum = data % >% distinct (!! by ) % >% arrange (!! by ) % >%
+data . frame () % >% na . omit ()
+level = as . character ( dum [ , 1 ])
+cs = contrasts ( as . factor ( dum [ , 1 ]))
+by _ name = colnames ( dum )
+
+A.15. Other Functions
+
+71
+
+if ( withBase == T ) {
+c 1 = c ( 1 , rep ( 0 , nrow ( dum ) - 1 ))
+dum = cbind ( dum , c 1 , contrasts ( as . factor ( dum [ ,
+1 ])))
+name = paste ( colnames ( dum )[ 1 ] , as . character ( dum [ ,
+1 ]) , sep = " _ " )
+colnames ( dum ) = c ( colnames ( dum )[ 1 ] , name )
+} else {
+dum = cbind ( dum , contrasts ( as . factor ( dum [ ,
+1 ])))
+name = paste ( colnames ( dum )[ 1 ] , as . character ( dum [ ,
+1 ])[ - 1 ] , sep = " _ " )
+colnames ( dum ) = c ( colnames ( dum )[ 1 ] , name )
+}
+dum = inner _ join ( data , dum , by = by _ name ,
+copy = T )
+if ( withBase == F ) {
+dum = dum % >% select ( -!! by )
+}
+if ( return . level == T ) {
+dum = list ( dum = dum , levels = level )
+return ( dum )
+} else {
+return ( dum )
+}
+}
+db _ cut = function ( var , breaks , data ) {
+var = enquo ( var )
+var _ name = as . character ( var )[ 2 ]
+data = data % >% rename ( vars = !! var ) % >%
+filter (! is . na ( vars ))
+breaks = breaks [ - 1 ]
+trues = seq ( length ( breaks ))
+temp _ exprs = paste ( " ifelse ( vars " , " <= " , breaks ,
+" ," , trues , " , _ f _) " )
+temp _ exprs [ length ( breaks )] = gsub ( pattern = " [_] f [_] " ,
+replacement = " NA " , x = temp _ exprs [ length ( breaks )])
+mut _ exprs = temp _ exprs [ 1 ]
+for ( i in 2 : length ( breaks )) {
+mut _ exprs = gsub ( pattern = " [_] f [_] " ,
+replacement = temp _ exprs [ i ] , x = mut _ exprs )
+}
+mut _ exprs = parse _ expr ( mut _ exprs )
+data = data % >% mutate ( â_ cuts _ â = !! mut _ exprs ) % >%
+
+72
+
+Appendix A. Codes
+rename ( â:= â(!! sym ( var _ name ) , vars )) % >%
+rename ( cuts = â_ cuts _ â)
+data
+
+}
+db _ cut 2 = function ( var , breaks , right = TRUE ,
+data ) {
+var = enquo ( var )
+mult = diff ( breaks )[ 1 ]
+if ( right == TRUE ) {
+data = data % >% mutate ( cut = ((!! quo ( mult )) *
+ceiling ((!! var )/(!! quo ( mult )))) (!! quo ( mult )))
+} else {
+data = data % >% mutate ( cut = ((!! quo ( mult )) *
+floor ((!! var )/(!! quo ( mult )))))
+}
+return ( data )
+}
+svydbVar 2 = function (x , xleft = 1 , xright = 2 ,
+st , m _h , data ) {
+xleft = x [ xleft ]
+xright = x [ xright ]
+m = data
+m = m % >% select ( xleft = !! sym ( xleft ) ,
+xright = !! sym ( xright ) , st = st , m _ h = m _ h )
+m _ h = m % >% select ( st , m _ h ) % >% mutate ( m _ h = 1 ) % >%
+group _ by ( st ) % >% summarise ( m _ h = sum ( m _ h ))
+m = m % >% select ( - m _ h )
+m = m % >% mutate ( ztz = xleft * xright ) % >%
+group _ by ( st ) % >% summarise ( ztz = sum ( ztz ))
+m = left _ join (m , m _h , by = " st " )
+m = m % >% mutate ( scaled = ztz * ( m _ h /( m _ h - 1 ))) % >%
+select ( scaled ) % >% summarise ( sum ( scaled )) % >%
+compute ( temporary = T ) % >% pull ()
+return ( m )
+}
+svydbVar = function (x , st , m _h , data ) {
+m = data
+m = m % >% select ( x = x , st = st , m _ h = m _ h )
+m _ h = m % >% select ( st , m _ h ) % >% mutate ( m _ h = 1 ) % >%
+group _ by ( st ) % >% summarise ( m _ h = sum ( m _ h ))
+m = m % >% select ( - m _ h )
+m = m % >% mutate ( ztz = x * x ) % >% group _ by ( st ) % >%
+summarise ( ztz = sum ( ztz ))
+m = left _ join (m , m _h , by = " st " )
+m = m % >% mutate ( scaled = ztz * ( m _ h /( m _ h - 1 ))) % >%
+select ( scaled ) % >% summarise ( sum ( scaled )) % >%
+
+A.15. Other Functions
+compute ( temporary = T ) % >% pull ()
+return ( m )
+}
+c 2 f = function ( x ) {
+as . formula ( paste ( " ~ " , x , sep = " " ))
+}
+svydb _ monet _ sampleN = function ( data , n ) {
+q = paste ( " SELECT * FROM " , data $ ops $x , " SAMPLE " ,
+n)
+dbGetQuery ( data $ src $ con , q )
+}
+as . data . frame . svydbstat = function ( x ) {
+ans = cbind ( coef ( x ) , SE ( x ))
+colnames ( ans ) = c ( attr (x , " statistic " ) , " SE " )
+ans
+}
+print . svydbstat = function ( xx , ...) {
+v <- attr ( xx , " var " )
+m = cbind ( xx , sqrt ( v ))
+colnames ( m ) = c ( attr ( xx , " statistic " ) , " SE " )
+printCoefmat ( m )
+}
+coef . svydbstat = function ( object , ...) {
+attr ( object , " statistic " ) = NULL
+attr ( object , " name " ) = NULL
+attr ( object , " var " ) = NULL
+unclass ( object ) % >% t () % >% as . vector ()
+}
+SE . svydbstat = function (x , ...) {
+s = attr (x , " var " ) % >% sqrt ()
+names ( s ) = attr (x , " name " )
+return ( s )
+}
+print . svydbrepstat = function ( xx , ...) {
+if ( is . list ( xx )) {
+xx = xx $ svydbrepstat
+}
+v <- attr ( xx , " var " )
+m = cbind ( xx , sqrt ( v ))
+colnames ( m ) = c ( attr ( xx , " statistic " ) , " SE " )
+rownames ( m ) = attr ( xx , " name " )
+printCoefmat ( m )
+}
+
+73
+
+74
+
+Appendix A. Codes
+
+coef . svydbrepstat = function ( object , ...) {
+if ( is . list ( object )) {
+object = object $ svydbrepstat
+}
+attr ( object , " statistic " ) = NULL
+attr ( object , " name " ) = NULL
+attr ( object , " var " ) = NULL
+unclass ( object ) % >% t () % >% as . vector ()
+}
+SE . svydbrepstat = function (x , ...) {
+if ( is . list ( x )) {
+x = x $ svydbrepstat
+}
+s = attr (x , " var " ) % >% sqrt ()
+names ( s ) = attr (x , " name " )
+return ( s )
+}
+print . svydblm = function (x , digits =
+max ( 3L , getOption ( " digits " ) - 3 L ) , ...) {
+print ( x $ design )
+cat ( " \ nSurvey design :\ n " )
+print ( x $ design $ call )
+cat ( " \ nCall :\ n " , paste ( deparse ( x $ call ) , sep = " \ n " ,
+collapse = " \ n " ) , " \ n \ n " , sep = " " )
+if ( length ( coef ( x ))) {
+cat ( " Coefficients :\ n " )
+print . default ( format ( coef ( x ) , digits = digits ) ,
+print . gap = 2L , quote = FALSE )
+} else cat ( " No coefficients \ n " )
+cat ( " \ n " )
+invisible ( x )
+}
+summary . svydblm = function ( object ) {
+df . r = object $ df . residual
+coef . p = coef ( object )
+covmat = vcov ( object )
+dimnames ( covmat ) = list ( colnames ( coef . p ) ,
+colnames ( coef . p ))
+var . cf = diag ( covmat )
+s . err = sqrt ( var . cf )
+tvalue = coef . p / s . err
+dn = c ( " Estimate " , " Std . Error " )
+pvalue <- 2 * pt ( - abs ( tvalue ) , df . r )
+coef . table <- rbind ( coef .p , t ( as . matrix ( s . err )) ,
+tvalue , pvalue ) % >% t ()
+dimnames ( coef . table ) <- list ( colnames ( coef . p ) ,
+c ( dn , " t value " , " Pr ( >| t |) " ))
+ans = list ( df . residual = df .r ,
+coefficients = coef . table ,
+
+A.15. Other Functions
+
+75
+
+cov . unscaled = covmat , cov . scaled = covmat ,
+call = object $ call , design = object $ design )
+class ( ans ) <- c ( " summary . svydblm " , " summary . glm " )
+return ( ans )
+}
+print . summary . svydblm = function (x , digits = max ( 3 ,
+getOption ( " digits " ) - 3 ) ,
+signif . stars = getOption ( " show . signif . stars " ) , ...) {
+cat ( " \ nCall :\ n " )
+cat ( paste ( deparse ( x $ call ) , sep = " \ n " , collapse = " \ n " ) ,
+" \ n \ n " , sep = " " )
+cat ( " Survey design :\ n " )
+print ( x $ design $ call )
+cat ( " \ nCoefficients :\ n " )
+coefs <- x $ coefficients
+if (! is . null ( aliased <- is . na ( x $ coefficients [ ,
+1 ])) && any ( aliased )) {
+cn <- names ( aliased )
+coefs <- matrix ( NA , length ( aliased ) , 4 ,
+dimnames = list ( cn , colnames ( coefs )))
+coefs [! aliased , ] <- x $ coefficients
+}
+printCoefmat ( coefs , digits = digits ,
+signif . stars = signif . stars ,
+na . print = " NA " , ...)
+invisible ( x )
+}
+predict . svydblm = function ( object , newdata = NULL ,
+...) {
+tt = delete . response ( object $ terms )
+mf = model . frame ( tt , data = newdata ,
+xlev = object $ design $ levels )
+mm = model . matrix ( tt , mf )
+eta = drop ( mm %*% as . vector ( coef ( object )))
+attr ( eta , " var " ) = drop ( rowSums (( mm %*% vcov ( object )) *
+mm ))
+attr ( eta , " statistic " ) = " link "
+class ( eta ) <- " svydbstat "
+eta
+}
+vcov . svydblm = function (x , ...) {
+x $ cov . unscaled
+}
+
+77
+
+Appendix B
+
+Result Tables
+All units are in seconds.
+
+B.1
+
+Total
+
+B.1.1
+
+Numeric variable
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+B.1.2
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+Survey
+0.43
+0.88
+1.38
+1.76
+2.35
+2.80
+3.26
+3.95
+-
+
+svydb.local
+0.06
+0.08
+0.11
+0.15
+0.17
+0.21
+0.28
+0.26
+-
+
+svydb.database
+0.40
+0.41
+0.61
+0.72
+0.81
+0.94
+0.97
+1.15
+1.17
+1.56
+1.61
+1.92
+
+Categorical variable with 7 levels
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+Survey
+0.73
+1.25
+1.87
+2.58
+3.10
+3.94
+4.42
+5.27
+-
+
+svydb.local
+0.22
+0.28
+0.34
+0.46
+0.51
+0.61
+0.71
+0.79
+-
+
+svydb.database
+1.20
+1.50
+1.76
+2.03
+2.28
+2.65
+2.92
+3.20
+3.63
+4.25
+4.67
+5.21
+
+78
+
+Appendix B. Result Tables
+
+B.2
+
+Mean
+
+B.2.1
+
+Numeric variable
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+B.2.2
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+Survey
+0.43
+0.90
+1.35
+1.86
+2.13
+2.77
+3.26
+3.60
+-
+
+svydb.local
+0.09
+0.11
+0.14
+0.21
+0.23
+0.27
+0.30
+0.34
+-
+
+svydb.database
+0.63
+0.79
+0.96
+1.24
+1.31
+1.48
+1.62
+1.85
+2.09
+2.39
+2.66
+3.09
+
+Categorical variable with 7 levels
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+Survey
+0.72
+1.25
+1.90
+2.49
+3.26
+4.02
+4.85
+5.55
+-
+
+svydb.local
+0.21
+0.35
+0.47
+0.70
+0.76
+0.89
+1.02
+0.94
+-
+
+svydb.database
+1.65
+2.49
+2.73
+3.26
+3.83
+4.50
+5.04
+5.63
+6.68
+7.53
+8.70
+9.72
+
+B.3. Regression
+
+B.3
+
+Regression
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+B.4
+
+79
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+Survey
+1.18
+2.00
+3.16
+4.50
+5.65
+6.77
+8.13
+9.75
+-
+
+svydb.local
+0.68
+1.03
+1.30
+1.31
+1.65
+1.97
+2.24
+2.68
+-
+
+svydb.database
+2.95
+4.24
+5.31
+6.56
+7.75
+8.70
+10.09
+10.72
+12.31
+14.31
+16.32
+18.22
+
+Survey
+0.58
+1.16
+1.55
+2.18
+2.80
+3.45
+4.24
+4.82
+-
+
+svydb.local
+0.08
+0.18
+0.26
+0.29
+0.28
+0.31
+0.27
+0.32
+-
+
+svydb.database
+0.36
+0.51
+0.63
+0.83
+0.93
+1.04
+1.17
+1.40
+1.49
+1.73
+1.98
+2.25
+
+Quantiles
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+80
+
+B.5
+
+Appendix B. Result Tables
+
+Survey Tables
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+B.6
+
+Survey
+0.18
+0.39
+0.56
+0.78
+0.97
+1.16
+1.38
+1.56
+-
+
+svydb.local
+0.26
+0.49
+0.69
+0.76
+1.00
+1.11
+1.37
+1.47
+-
+
+svydb.database
+0.67
+1.02
+1.35
+1.69
+2.05
+2.44
+2.56
+2.97
+3.45
+4.05
+4.63
+5.20
+
+svydb.local
+0.46
+0.74
+1.13
+1.45
+-
+
+svydb.database
+2.12
+3.49
+4.81
+5.86
+7.10
+9.34
+10.62
+14.75
+
+Total - Replicate Weights
+
+1
+2
+3
+4
+5
+6
+7
+8
+
+B.7
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+
+Survey
+3.54
+9.03
+12.31
+21.57
+-
+
+Mean - Replicate Weights
+
+1
+2
+3
+4
+5
+6
+7
+8
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+
+Survey
+3.57
+8.69
+14.25
+20.27
+-
+
+svydb.local
+0.66
+0.98
+1.61
+1.89
+-
+
+svydb.database
+3.66
+5.68
+7.23
+8.72
+10.36
+12.24
+13.97
+16.02
+
+B.8. Histogram
+
+B.8
+
+Histogram
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+B.9
+
+81
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+Survey
+0.97
+2.07
+3.14
+4.03
+5.15
+6.12
+7.50
+8.57
+-
+
+svydb.local
+0.58
+0.75
+0.90
+1.05
+1.15
+1.42
+1.48
+1.66
+-
+
+svydb.database
+1.57
+2.56
+2.84
+3.49
+4.12
+4.79
+5.24
+6.05
+7.03
+7.94
+9.15
+10.34
+
+Survey
+2.84
+4.96
+7.44
+10.36
+12.83
+14.96
+18.22
+22.12
+-
+
+svydb.local
+1.21
+1.39
+1.54
+1.69
+1.90
+2.01
+2.14
+2.28
+-
+
+svydb.database
+4.37
+5.20
+6.16
+7.01
+7.88
+8.92
+9.61
+10.31
+11.38
+13.01
+14.56
+16.20
+
+Boxplot
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+82
+
+B.10
+
+Appendix B. Result Tables
+
+Hexagon Binning
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+Observations
+250000
+500000
+750000
+1000000
+1250000
+1500000
+1750000
+2000000
+2500000
+3000000
+3500000
+4000000
+
+Survey
+0.41
+0.56
+0.99
+1.00
+1.50
+1.54
+1.97
+2.32
+-
+
+svydb.local
+0.92
+1.23
+1.53
+1.97
+2.17
+2.47
+2.61
+2.92
+-
+
+svydb.database
+2.05
+3.23
+4.27
+5.53
+6.40
+7.33
+8.24
+9.29
+10.65
+12.59
+14.41
+16.40
+
+83
+
+Bibliography
+Bache, Stefan Milton and Hadley Wickham (2014). magrittr: A Forward-Pipe Operator
+for R. R package version 1.5. URL: https : / / CRAN . R - project . org / package =
+magrittr.
+Carr, D. B. et al. (1987). âScatterplot Matrix Techniques for Large Nâ. In: Journal of the
+American Statistical Association 82.398, pp. 424â436. ISSN: 01621459. URL: http :
+//www.jstor.org/stable/2289444.
+Carr, Dan et al. (2018). hexbin: Hexagonal Binning Routines. R package version 1.27.2.
+URL : https://CRAN.R-project.org/package=hexbin.
+Chang, Winston (2017). R6: Classes with Reference Semantics. R package version 2.2.2.
+URL : https://CRAN.R-project.org/package=R6.
+Henry, Lionel and Hadley Wickham (2018). rlang: Functions for Base Types and Core R
+and âTidyverseâ Features. R package version 0.2.0. URL: https://CRAN.R-project.
+org/package=rlang.
+Horvitz, D. G. and D. J. Thompson (1952). âA Generalization of Sampling Without
+Replacement From a Finite Universeâ. In: Journal of the American Statistical Association 47.260, pp. 663â685. ISSN: 01621459. URL: http://www.jstor.org/stable/
+2280784.
+Lewin-Koh, Nicholas (2016). Hexagon Binning: an Overview. URL: https://cran.rproject.org/web/packages/hexbin/vignettes/hexagon_binning.pdf.
+Lumley, Thomas (2004). âAnalysis of Complex Survey Samplesâ. In: Journal of Statistical Software 9.1. R package verson 2.2, pp. 1â19.
+â (2014). sqlsurvey: analysis of very large complex survey samples (experimental). R package version 0.6-11/r41. URL: https : / / R - Forge . R - project . org / projects /
+sqlsurvey/.
+Luraschi, Javier et al. (2018). sparklyr: R Interface to Apache Spark. R package version
+0.8.3. URL: https://CRAN.R-project.org/package=sparklyr.
+MonetDB-B.V. (2008). MonetDB Database System. URL: https://www.monetdb.org/.
+Ruiz, Edgar (2018). dbplot: Simplifies Plotting Data Inside Databases. R package version
+0.3.0. URL: https://CRAN.R-project.org/package=dbplot.
+Sievert, Carson et al. (2017). plotly: Create Interactive Web Graphics via âplotly.jsâ. R
+package version 4.7.1. URL: https://CRAN.R-project.org/package=plotly.
+Wickham, Hadley (2009). ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag
+New York. ISBN: 978-0-387-98140-6. URL: http://ggplot2.org.
+Wickham, Hadley, Peter Danenberg, and Manuel Eugster (2017). roxygen2: In-Line
+Documentation for R. R package version 6.0.1. URL: https://CRAN.R- project.
+org/package=roxygen2.
+Wickham, Hadley, Jim Hester, and Winston Chang (2018). devtools: Tools to Make Developing R Packages Easier. R package version 1.13.5. URL: https : / / CRAN . R project.org/package=devtools.
+Wickham, Hadley and Edgar Ruiz (2018). dbplyr: A âdplyrâ Back End for Databases. R
+package version 1.2.1. URL: https://CRAN.R-project.org/package=dbplyr.
+Wickham, Hadley et al. (2017). dplyr: A Grammar of Data Manipulation. R package
+version 0.7.4. URL: https://CRAN.R-project.org/package=dplyr.
+
+84
+
+BIBLIOGRAPHY
+
+Xie, Yihui (2017). formatR: Format R Code Automatically. R package version 1.5. URL:
+https://CRAN.R-project.org/package=formatR.
+
+

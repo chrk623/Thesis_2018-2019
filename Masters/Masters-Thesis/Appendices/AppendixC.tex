@@ -1,0 +1,238 @@
+\chapter{\textbf{shiny} app} \label{AppendixB}
+
+\section{Joining module}
+\subsection{UI}
+\begin{lstlisting}
+library(shiny)
+library(dataAnim)
+library(shinyjs)
+library(shinyalert)
+library(V8)
+shinyUI(fluidPage(
+  useShinyalert(),
+  useShinyjs(),
+  extendShinyjs(text =
+                  "shinyjs.clearpage = function(){
+                    d3.select('svg').remove()}"),
+  extendShinyjs(text =
+                  "shinyjs.begin = function(){if(d3
+                    .select('svg').node() === null)
+                            {d3.select('#mypanel')
+                                .append('svg')}}"),
+  titlePanel("Joining Animation"),
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("xtbl_upload", "Choose CSV File for Table 1",
+                multiple = FALSE,
+                accept = c("text/csv",
+                           "text/comma-separated-values,
+                            text/plain", ".csv")),
+      fileInput("ytbl_upload", "Choose CSV File for Table 2",
+                multiple = FALSE,
+                accept = c("text/csv",
+                           "text/comma-separated-values,
+                            text/plain", ".csv")),
+      selectInput("jointype_input", "Join Type", c("Left", 
+        "Inner", "Complete"),
+                  selected = "Left", multiple = FALSE),
+      selectInput("join_var", "Variable to join by", NULL, 
+        multiple = FALSE), sliderInput("speed_sld",
+                  "Animation Speed",
+                  min = 1,
+                  max = 5,
+                  value = 1),
+      checkboxInput("msg_chk", "Show annotations", value = F),
+      fluidRow(actionButton(inputId = "go_btn", label = "Go!"),
+               actionButton(inputId = "clear_btn", 
+                label = "Clear")), br(),
+      fluidRow(column(8), downloadButton(
+        "download_btn", "Download Animation")),
+      width = 3
+    ),
+    mainPanel(
+      join_animOutput("animpanel0")
+    )
+  )
+))
+\end{lstlisting}
+
+\subsection{Server}
+\begin{lstlisting}
+library(shiny)
+get_id = function(txt, cnt){
+  txt = gsub("[0-9]", "", txt)
+  return(paste0(txt, cnt))
+}
+shinyServer(function(input, output, session) {
+x_tbl = reactiveValues(data = NULL)
+  y_tbl = reactiveValues(data = NULL)
+  store = reactiveValues(container_id = "animpanel0", 
+    cnt = 1, anim = NULL)
+  observeEvent(input$go_btn, {
+    shinyjs::disable("go_btn")
+    output$animpanel0<- join_animRender({
+      if(is.null(x_tbl$data) | is.null(y_tbl$data)) {
+        return()
+      }
+      store$anim = dataAnim::join_anim(join_type = 
+        tolower(input$jointype_input), 
+            speed = input$speed_sld, x = isolate(x_tbl$data),
+                 y = isolate(y_tbl$data), by = input$join_var,
+                    show_msg = input$msg_chk)
+      return(store$anim)
+    })
+  })
+  observeEvent(c(input$xtbl_upload, input$ytbl_upload), {
+    in_x = input$xtbl_upload
+    in_y = input$ytbl_upload
+    if(is.null(in_x) | is.null(in_y)) {
+      return(NULL)
+    }
+    x_tbl$data = read.csv(in_x$datapath, header = T,
+                          stringsAsFactors = F)
+    y_tbl$data = read.csv(in_y$datapath, header = T,
+                          stringsAsFactors = F)
+    updateSelectInput(session, inputId = "join_var",
+                      choices = intersect(colnames(x_tbl$data),
+                                colnames(y_tbl$data)))
+  })
+  observeEvent(input$clear_btn, {
+    js$clear_page()
+    shinyjs::enable("go_btn")
+  })
+  output$download_btn = downloadHandler(
+    filename = function() {
+      paste0("animation.html")
+    },
+    content = function(file) {
+      if(is.null(store$anim)) {
+        shinyalert::shinyalert("Download Failed", 
+            "Please check if your animation is loaded.",
+                type = "error")
+        return()
+      }
+      shinyalert::shinyalert("Download Success", 
+        "Go check out your animation!", type = "success")
+      htmlwidgets::saveWidget(store$anim, file = 
+        "animation.html", selfcontained = TRUE)
+      file.copy('animation.html', file)
+    }
+  )
+})
+
+\end{lstlisting}
+
+\section{Reshaping module}
+
+\subsection{UI}
+
+\begin{lstlisting}
+library(shiny)
+library(shinyjs)
+library(dataAnim)
+shinyUI(fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      tabsetPanel(
+        
+        tabPanel("Data", 
+                 br(),
+                 fileInput("data_upload", "Upload CSV File",
+                           multiple = FALSE,
+                           accept = c("text/csv",
+                             "text/comma-separated-values",
+                                ".csv"))
+        ),
+        tabPanel("Spread", 
+                br(),
+                selectInput("s_key", "Select the column to 
+                spread out to multiple columns (key)", ""),
+                selectInput("s_value", "Select the column 
+                with the values to be put in these 
+                columns (value)", ""),
+                fluidRow(actionButton(inputId = "s_go_btn", 
+                label = "Go!"),
+                    actionButton(inputId = "s_clear_btn", 
+                        label = "Clear")), br(),
+                 fluidRow(column(8), downloadButton(
+                    "g_download_btn", "Download Animation"))),
+        tabPanel("Gather",
+                 br(),
+                 textInput("g_key", "Name the new column 
+                    containing the old column names (Key)"),
+                 textInput("g_value", "Name the new column 
+                    containing the old column values (Value)"),
+                 selectInput("g_col", 
+                    "Select columns to gather together", ""),
+                 fluidRow(actionButton(inputId = "g_go_btn", 
+                    label = "Go!"),
+                          actionButton(inputId = "g_clear_btn", 
+                            label = "Clear")),
+                 br(),
+                 fluidRow(column(8), downloadButton(
+                    "g_download_btn", 
+                    "Download Animation")))
+      )
+    ),
+    mainPanel(
+      spread_animOutput("spread_panel"),
+      gather_animOutput("gather_panel")
+    )
+  )
+))
+
+\end{lstlisting}
+
+\subsection{Server}
+
+\begin{lstlisting}
+library(shiny)
+library(shinyjs)
+library(dataAnim)
+shinyServer(function(input, output) {
+  observeEvent(input$data_upload, {
+    in_x = input$data_upload
+    x_tbl$data = read.csv(in_x$datapath, header = T,
+                          stringsAsFactorsrshiny = F)
+    updateSelectInput(session, inputId = "g_col", choices = 
+        colnames(x_tbl))
+    updateSelectInput(session, inputId = "s_key", choices = 
+        colnames(x_tbl))
+    updateSelectInput(session, inputId = "s_value", choices = 
+        colnames(x_tbl))
+  })
+  observeEvent(input$g_clear_btn, {
+    # js$clearpage()
+  })
+  observeEvent(input$s_clear_btn, {
+    # js$clearpage()
+  })
+  dl = function(file) {
+    browser()
+    if(is.null(store$anim)) {
+      shinyalert::shinyalert("Download Failed", 
+        "Please check if your animation is loaded.", 
+            type = "error")
+      return()
+    }
+    shinyalert::shinyalert("Download Success", 
+        "Go check out your animation!", type = "success")
+    htmlwidgets::saveWidget(store$anim, file = 
+        "animation.html", selfcontained = TRUE)
+    file.copy('animation.html', file)
+  }
+  output$g_download_btn = downloadHandler(
+    filename = function() {
+      paste0("animation.html")
+    },
+    content = dl
+  )
+  output$s_download_btn = downloadHandler(
+    filename = function() {
+      paste0("animation.html")
+    },
+    content = dl
+  )
+})
+
+\end{lstlisting}

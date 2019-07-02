@@ -1,0 +1,842 @@
+% Appendix Template
+
+\chapter{\textbf{dataAnim} Package in \textsf{R}} \label{AppendixA}
+
+\section{Joining Module}
+
+\subsection{\texttt{join\_anim}}
+\begin{lstlisting}[language=R]
+#' Joining Animation
+#'
+#' @param join_type Type of join.
+#' @param x Table x, to pass to join.
+#' @param y Table y, to pass to join.
+#' @param by A character value of the variable to join by.
+#' @param speed Speed of the animation.
+#' @param width Width of the animation frame.
+#' @param height Height of the animation frame.
+#' @param show_msg A logical value indicating whether to 
+    show instructional messages in the animation.
+#' @description
+#' Function to create joining animations.
+#' @examples
+#' data(datoy1)
+#' join_anim(join_type = "left", speed = 1, x = datoy1$x, 
+    y = datoy1$y, by = "Name", show_msg = T)
+#' myanim = join_anim(join_type = "inner", speed = 1, 
+    x = datoy1$x, y = datoy1$y, by = "Name", show_msg = F)
+#' htmlwidgets::saveWidget(myanim)
+#' @author Charco Hui
+#' @import htmlwidgets
+#'
+#' @export
+join_anim <- function(join_type = "left", x, y, by, 
+    speed = 1, width = NULL, height = NULL,
+                      show_msg = F) {
+  if(nrow(x) >= 10 || nrow(y) >= 10) {
+    stop("Dataset cannot have more than 10 rows.")
+  }
+  if(ncol(x) >= 5 || ncol(y) >= 5) {
+    stop("Dataset cannot have more than 5 columns.")
+  }
+  data = list(data = process_join(x = x, y = y, key = by, 
+    complete_action = TRUE, show_msg = show_msg, 
+        join_type = join_type, asJSON = TRUE),
+              speed = speed, join_type = join_type)
+  out = htmlwidgets::createWidget(
+    name = "join_anim",
+    data,
+    width = width,
+    height = height,
+    package = 'dataAnim'
+  )
+  return(out)
+}
+#' @export
+join_animOutput <- function(outputId, width = "100%", 
+    height = "1000") {
+  shinyWidgetOutput(outputId, "join_anim", width, height,
+    package = "dataAnim")
+}
+#' @export
+join_animRender <- function(expr, env = parent.frame(), 
+    quoted = FALSE) {
+  if (!quoted) { expr <- substitute(expr) } # force quoted
+  shinyRenderWidget(expr, join_animOutput, env, 
+    quoted = TRUE)
+}
+
+\end{lstlisting}
+
+\subsection{Helper functions for joins}
+
+\begin{lstlisting}
+initial_prep = function(from_tbl, to_tbl, key, join_type, 
+    show_msg) {
+  from_ind = which(colnames(from_tbl) == key)
+  to_ind = which(colnames(to_tbl) == key)
+  initial = sapply(to_tbl[,to_ind], FUN = function(x) 
+    which(from_tbl[,from_ind] == x))
+  initial = lapply(initial, FUN = function(x) {
+    if(length(x) == 0) {
+      return(-1)
+    } else {
+      return(x)
+    }
+  })
+  when = lapply(initial, getwhen) %>% Reduce(rbind, .) 
+    %>% as.vector()
+  msg = lapply(initial, function(x) getmsg(x, join_type)) 
+    %>% Reduce(rbind, .) %>%
+    as.vector()
+  msg = data.frame(name = names(initial), 
+    msg = as.character(msg))
+  msg = msg %>% group_by(msg) %>% mutate(uq = row_number()) 
+    %>%ungroup() %>% mutate(msg = as.character(msg)) %>%
+    mutate(msg = ifelse(uq == 1, msg, NA)) %>% select(-uq)
+  msg = msg %>% rowwise() %>% transmute(msg = gsub("_val_", 
+    name, msg)) %>% pull(msg)
+  initial = tibble(row = seq(length(initial)), 
+    dest = initial)
+  if(isTRUE(show_msg)) {
+    initial = initial %>% mutate(msg = msg, when = when)
+  }
+  initial = initial %>% unnest() %>% split(.$row)
+  return(initial)
+}
+find_key_col = function(obj, key, minus1 = FALSE){
+  ans = which(colnames(obj) == key)
+  if(minus1 == TRUE){
+    return(ans - 1)
+  }else{
+    return(ans)
+  }
+}
+xy_loc = function(from_tbl, to_tbl, result_tbl, key, 
+    minus1 = F) {
+  result_tbl = result_tbl %>% mutate(stop = row_number())
+  from_cn = colnames(from_tbl)
+  from_tbl = from_tbl %>% mutate(start = row_number())
+  out = left_join(result_tbl, from_tbl, by = from_cn) %>%
+    select(start, stop) %>% na.omit() %>% arrange(stop)
+  return(out)
+}
+xy_loc2 = function(from_tbl, to_tbl, result_tbl, key, 
+    minus1 = F) {
+  result_tbl = result_tbl %>% 
+    group_by(!!!syms(colnames(to_tbl))) %>%
+    mutate(addrow = row_number()) %>% ungroup()
+  from_cn = colnames(from_tbl)
+  from_tbl = from_tbl %>% mutate(start = row_number())
+  to_cn = colnames(to_tbl)
+  to_tbl = to_tbl %>% mutate(split = row_number())
+  result_tbl = left_join(result_tbl, from_tbl, by = from_cn) 
+    %>% left_join(., to_tbl, by = to_cn) %>%
+    mutate(stop = row_number())
+  if(minus1 == T) {
+    result_tbl = result_tbl %>%
+      mutate(start = start - 1, stop = stop - 1)
+  }
+  out = result_tbl %>%
+    select(split, start, stop, addrow) %>%
+    na.omit() %>% 
+    split(x = ., f = .$split)
+  out = lapply(out, function(xx) xx %>% select(-split))
+  return(out)
+}
+getmsg = function(x, join_type) {
+  na_msg = switch(join_type, inner = "No match for _val_. 
+    \nDelete", "No match for _val_")
+  if(length(x) > 1) {
+    return(sprintf("%s matches found for \n_val_", 
+        length(x)))
+  }else if(x == -1) {
+    return(na_msg)
+  }else if(length(x) == 1) {
+    return("Matching _val_")
+  }
+}
+getwhen = function(x) {
+  if(length(x) > 1) {
+    return("after")
+  }else if(x == -1) {
+    return("after")
+  }else if(length(x) == 1) {
+    return("before")
+  }
+}
+\end{lstlisting}
+
+\subsection{Back end code for joining}
+
+\begin{lstlisting}
+process_join = function(x, y, key, height = 2, width = 5, 
+    svg_width = 1920, svg_height = 1080,
+                        complete_action = TRUE, 
+                            join_type = "left", show_msg, 
+                                asJSON = FALSE, ...){
+  xy = left_join(x, y, by = key)
+  temp = list(x = include_cn(x),
+              y = include_cn(y),
+              xy = include_cn(xy),
+              height = height,
+              initial_prep = initial_prep(y ,x, key = key, 
+                join_type = join_type, show_msg = show_msg),
+              x_key_col = find_key_col(x, key = key),
+              y_key_col = find_key_col(y, key = key),
+              svg_width = svg_width, svg_height = svg_height)
+  if(isTRUE(complete_action)) {
+    row2move = temp$initial_prep %>% Reduce(rbind, .) %>%
+      filter(dest != -1) %>% pull(dest) %>%
+      unique()
+    row2move = outersect(1:nrow(y), row2move)
+    col_ind = sapply(colnames(temp$y), function(x){
+      which(colnames(temp$xy) == x)
+    })
+    temp = c(temp, list(com_act = list(row2move = row2move, 
+        col_ind = col_ind)))
+  }
+  temp = c(temp,
+          list(x_w = col_max_width(temp$x, width = width),
+                y_w = col_max_width(temp$y, width = width)))
+  temp = c(temp,
+          list(x_cord_x = c(0, 
+          cumsum(temp$x_w[-length(temp$x_w)])),
+                x_cord_y = c(0, 
+                cumsum(temp$y_w[-length(temp$y_w)]))))
+  if(asJSON == TRUE){
+    return(jsonlite::toJSON(temp))
+  }else{
+    return(temp)
+  }
+}
+
+\end{lstlisting}
+
+\subsection{\textbf{htmlwidgets} \textsf{JavaScript} code for \texttt{join\_anim} in \textsf{R}}
+\begin{lstlisting}
+HTMLWidgets.widget({
+
+  name: 'join_anim',
+
+  type: 'output',
+
+  factory: function (el, width, height) {
+    let svg_width = width * 0.8;
+    let svg_height = svg_width / 1.6;
+    return {
+      renderValue: function (x) {
+        let data = x.data;
+        let speed = x.speed;
+        let join_type = x.join_type;
+        let xtbl_width = arr_sum(data.x_w[0]);
+        let ytbl_width = arr_sum(data.y_w[0]);
+        let xy_width = xtbl_width + ytbl_width;
+        let cell_height = data.height[0];
+        let xscale_num = (xy_width + 1.5 * ytbl_width) / 0.9;
+        let yscale_num = cell_height * (data.x.length + 
+            data.y.length - 1) / 0.9;
+        d3.select(el)
+          .append("svg")
+          .attr("width", svg_width)
+          .attr("height", svg_height);
+
+        let x_scale =
+          d3.scaleLinear()
+          .domain([0, xscale_num])
+          .range([0, svg_width]);
+        let y_scale =
+          d3.scaleLinear()
+          .domain([0, yscale_num])
+          .range([0, svg_height]);
+        let height = y_scale(cell_height);
+
+        let xtbl_start = {
+          x: svg_width * 0.05,
+          y: svg_height * 0.05
+        };
+        let ytbl_start = {
+          x: svg_width - svg_width * 0.05 - 
+            x_scale(ytbl_width),
+          y: svg_height * 0.05
+        };
+
+        let x_width = arr_scale(data.x_w[0], x_scale);
+        let y_width = arr_scale(data.y_w[0], x_scale);
+        let x_cord_x = arr_scale(data.x_cord_x, x_scale);
+        let x_cord_y = arr_scale(data.x_cord_y, x_scale);
+        let y_cord_x = Array.from(Array(data.x.length), 
+            (d, i) => i * height);
+        let y_cord_y = Array.from(Array(data.y.length), 
+            (d, i) => i * height);
+
+        x_rect_cord = draw_table(data.x, xtbl_start["x"], 
+            xtbl_start["y"], x_cord_x,
+          x_width, height, "x", parseInt(data.x_key_col));
+        y_rect_cord = draw_table(data.y, ytbl_start["x"], 
+            ytbl_start["y"], x_cord_y,
+          y_width, height, "y", parseInt(data.y_key_col));
+
+        let iso_action = join_type;
+        if (join_type == "complete") {
+          join_type = "left";
+        }
+
+        keycol_anim("x", "y", speed, start_time = 0)
+          .on("end", function () {
+            join_anim(data.initial_prep, speed, join_type, 
+                true) .on("end", () => {
+                join_finalcheck(data.initial_prep)
+                  .on("end", () => {
+                    if (iso_action === "complete") {
+                      comjoin_final(data.com_act, speed)
+                        .on("end", () => {
+                          iso_tbl(join_type, height, speed, 0);
+                        });
+                    } else {
+                      iso_tbl(join_type, height, speed, 0);
+                    }
+                  })
+              })
+          })
+      },
+      resize: function (width, height) {}
+    };
+  }
+});
+\end{lstlisting}
+
+\section{Reshaping module}
+
+\subsection{\texttt{spread\_anim}}
+
+\begin{lstlisting}
+#' Spread Animation
+#'
+#' @param key Column used to spread out to multiple columns.
+#' @param value Column containing values of the key.
+#' @param data Data to pass into the function.
+#' @param speed Speed of the animation.
+#' @param width Width of the animation frame in pixels.
+#' @param height Height of the animation frame in pixels.
+#' @description
+#' Long to Wide transformation.
+#' @examples
+#' data(toyda_long)
+#' spread_anim(key = "Subject", value = "Score", 
+    data = toyda_long)
+#' myanim = spread_anim(key = "Subject", value = "Score", 
+    data = toyda_long)
+#' htmlwidgets::saveWidget(myanim, file = "myanim.html")
+#' @author Charco Hui
+#' @import htmlwidgets
+#'
+#' @export
+spread_anim <- function(key, value, data, speed = 1, 
+    width = NULL, height = NULL) {
+  if(ncol(data) > 3) {
+    stop("Only 3 columns are supported at the moment")
+  }
+  data = list(data = process_spread(key = key, value = value, 
+    data = data, asJSON = TRUE),
+              speed = speed)
+  out = htmlwidgets::createWidget(
+    name = "spread_anim",
+    data,
+    width = width,
+    height = height,
+    package = 'dataAnim'
+  )
+  return(out)
+}
+#' @export
+spread_animOutput <- function(outputId, width = "100%", 
+    height = "1000") {
+  shinyWidgetOutput(outputId, "spread_anim", width, height, 
+    package = "dataAnim")
+}
+#' @export
+spread_animRender <- function(expr, env = parent.frame(), 
+    quoted = FALSE) {
+  if (!quoted) { expr <- substitute(expr) } 
+  shinyRenderWidget(expr, spread_animOutput, env, 
+    quoted = TRUE)
+}
+
+\end{lstlisting}
+
+\subsection{\texttt{gather\_anim}}
+
+\begin{lstlisting}
+#' Gather Animation
+#'
+#' @param key New column name to contain old columns names.
+#' @param value New column name to contain old column valuess.
+#' @param col Columns in the original data to transform on.
+#' @param data Data to pass into the function.
+#' @param speed Speed of the animation.
+#' @param width Width of the animation frame in pixels.
+#' @param height Height of the animation frame in pixels.
+#' @description
+#' Wide to long transformation.
+#' @examples
+#' data(toyda_wide)
+#' gather_anim(key = "Subject", value = "Score", 
+    col = c("English", "Maths"), data = toyda_wide)
+#' myanim = gather_anim(key = "Subject", value = "Score", 
+    col = c("English", "Maths"), data = toyda_wide)
+#' htmlwidgets::saveWidget(myanim, file = "myanim.html")
+#' @author Charco Hui
+#' @import htmlwidgets
+#'
+#' @export
+gather_anim <- function(key, value, data, col, speed = 1, 
+    width = NULL, height = NULL) {
+  if(ncol(data) > 3) {
+    stop("Only 3 columns are supported at the moment")
+  }
+  data = list(data = process_gather(key = key, 
+    value = value, col = col, data = data, 
+        asJSON = TRUE), speed = speed)
+  out = htmlwidgets::createWidget(
+    name = "gather_anim",
+    data,
+    width = width,
+    height = height,
+    package = 'dataAnim'
+  )
+  return(out)
+}
+#' @export
+gather_animOutput <- function(outputId, width = "100%",
+    height = "1000") {
+  shinyWidgetOutput(outputId, "gather_anim", width, 
+    height, package = "dataAnim")
+}
+#' @export
+gather_animRender <- function(expr, env = parent.frame(), 
+    quoted = FALSE) {
+  if (!quoted) { expr <- substitute(expr) }
+  shinyRenderWidget(expr, spread_animOutput, env, 
+    quoted = TRUE)
+}
+\end{lstlisting}
+
+\subsection{Back end code for reshaping}
+
+\begin{lstlisting}
+process_spread = function(key, value, data, height = 2, 
+    width = 5, svg_width = 1920,
+                          svg_height = 1080, show_msg = T, 
+                            asJSON = FALSE) {
+  if(ncol(data) != 3) {
+    stop("Inputted dataset must have 3 columns for 
+        the animation to work")
+  } else if(ncol(data) > 3) {
+    stop("Spread animation currently only supports dataset 
+        with 3 columns")
+  } else if(ncol(data) < 3) {
+    stop("This data set is not possible to transform to long")
+  }
+  cn = colnames(data)
+  key_ind = which(cn == key)
+  value_ind = which(cn == value)
+  pivot_ind = (1:ncol(data))[-c(key_ind, value_ind)]
+  data = data %>% arrange(!!sym(key), !!sym(cn[pivot_ind]))
+  result = data %>% spread(key = key, value = value)
+  na_pos = which(is.na(result), arr.ind = TRUE)
+  result[is.na(result)] = ""
+  key_seq = data %>% pull(!!sym(key)) %>% as.factor()
+  key_seq = cumsum(tabulate(key_seq))
+  key_seq = data.frame(start = c(1, 
+    key_seq[-length(key_seq)] + 1), stop = key_seq)
+  split_data = apply(key_seq, 1, function(x) data[x[1]:x[2],])
+  key_rowseq = lapply(split_data, function(x) {
+    inner_join(result %>% select(pivot_ind) %>% 
+        mutate(`__rn` = row_number()),
+              x, by = "Name") %>% pull(`__rn`)
+  })
+  pivot_rows = which(!duplicated(data[,pivot_ind]))
+  out = list(key_ind = key_ind, value_ind = value_ind, 
+    original = include_cn(data),
+             height = height, svg_width = svg_width, 
+                pivot_ind = pivot_ind, key_seq = key_seq,
+             svg_height = svg_height, 
+                result = include_cn(result), key = key, 
+                    value = value,key_rowseq = key_rowseq, 
+                        pivot_rows = pivot_rows, 
+                pivot = cn[pivot_ind], na_pos = na_pos)
+  out = c(out, list(rslt_cn = as.vector(colnames(out$result)),
+                    og_w = col_max_width(out$original, 
+                        width = width),
+                    rslt_w = col_max_width(out$result, 
+                        width = width)))
+  out = c(out, list(og_cord_x = c(0, 
+    cumsum(out$og_w[-length(out$og_w)])),rslt_cord_x = 
+        c(0, cumsum(out$rslt_w[-length(out$rslt_w)]))))
+  if(isTRUE(asJSON)) {
+    return(jsonlite::toJSON(out))
+  } else {
+    return(out)
+  }
+}
+process_gather = function(key, value, col, data, height = 2, 
+    width = 5, svg_width = 1920,
+                          svg_height = 1080, show_msg = T, 
+                            asJSON = FALSE) {
+  if(missing(col)) {
+    stop("Columns to keep must be specified.")
+  }
+  cn = colnames(data)
+  pivot_ind = which(!(cn %in% col))
+  col_ind = which(cn %in% col)
+  result = data %>% gather(key = !!sym(key), 
+    value = !!sym(value), col)
+  cn2 = colnames(result)
+  key_ind = which(cn2 == key)
+  value_ind = which(cn2 == value)
+  out = list(original = include_cn(data), height = height, 
+    svg_height = svg_height, svg_width = svg_width,
+        result = include_cn(result), pivot_ind = pivot_ind,
+             col_ind = col_ind, key = key, value = value, 
+                col = col, value_ind = value_ind,
+             key_ind = key_ind)
+  out = c(out, list(rslt_cn = as.vector(colnames(out$result)),
+                    og_w = col_max_width(out$original, 
+                        width = width),
+                    rslt_w = col_max_width(out$result, 
+                        width = width)))
+  out = c(out, list(og_cord_x = c(0, 
+    cumsum(out$og_w[-length(out$og_w)])),
+                    rslt_cord_x = c(0, 
+                        cumsum(out$rslt_w
+                            [-length(out$rslt_w)]))))
+  if(isTRUE(asJSON)) {
+    return(jsonlite::toJSON(out))
+  } else {
+    return(out)
+  }
+}
+\end{lstlisting}
+
+\subsection{\textbf{htmlwidgets} \textsf{JavaScript} code for \texttt{spread\_anim} \textbf{R}}
+
+\begin{lstlisting}
+HTMLWidgets.widget({
+    name: 'spread_anim',
+    type: 'output',
+    factory: function (el, width, height) {
+      let svg_width = width * 0.8;
+      let svg_height = svg_width / 1.6;
+      return {
+        renderValue: function (x) {
+          let data = x.data;
+          svg_div = "animpanel0";
+          let otbl_width = arr_sum(data.og_w[0]);
+          let rtbl_width = arr_sum(data.rslt_w[0]);
+          let or_width = otbl_width + rtbl_width;
+          let cell_height = data.height[0];
+          let xscale_num = (or_width + 1.5 * rtbl_width) / 0.9;
+          let yscale_num = cell_height * (data.original.length + 
+            data.original.length - 1) / 0.9;
+          el = d3.select("body")
+            .append("div")
+            .attr("id", svg_div);
+          el.append("svg")
+            .attr("width", svg_width)
+            .attr("height", svg_height);
+          let x_scale =
+            d3.scaleLinear()
+            .domain([0, xscale_num])
+            .range([0, svg_width]);
+          let y_scale =
+            d3.scaleLinear()
+            .domain([0, yscale_num])
+            .range([0, svg_height]);
+          let height = y_scale(cell_height);
+          let otbl_start = {
+            x: svg_width * 0.05,
+            y: svg_height * 0.25
+          };
+          let ptxt_start = {
+            x: svg_width * 0.015,
+            y: svg_height * 0.05
+          };
+          let o_width = arr_scale(data.og_w[0], x_scale);
+          let x_cord_o = arr_scale(data.og_cord_x, 
+            x_scale);
+          let rslt_cord_x = arr_scale(data.rslt_cord_x, x_scale);
+          let r_width = arr_scale(data.rslt_w[0], x_scale);
+          let r_tbl_tl = {
+            x: svg_width - svg_width * 0.05 - arr_sum(r_width),
+            y: otbl_start["y"]
+          };
+          let key_rect_w = x_scale(data.rslt_w[0]
+            [data.key_ind[0] - 1]);
+          let value_rect_w = x_scale(data.rslt_w[0]
+            [data.value_ind[0] - 1]);
+          let tbl_mid_xy = {
+            x: svg_width / 2,
+            y: svg_height / 2
+          };
+          draw_table_rectonly(data.result, r_tbl_tl["x"], 
+            r_tbl_tl["y"], rslt_cord_x,
+            r_width, height, "r", parseInt(data.pivot_ind), 
+                false);
+          d3.selectAll(".r_rows")
+            .style("opacity", 0);
+          input_text_node = d3.select(".r_rows").
+            selectAll(".r_cols").nodes();
+          input_text_node.forEach(function (d, i) {
+            cur_rect = d3.select(input_text_node[i])
+              .select("rect");
+            d3.select(input_text_node[i])
+              .append("text")
+              .attr("x", parseFloat(cur_rect.attr("x")) + 
+                parseFloat(cur_rect.
+                    attr("width") / 2))
+              .attr("y", parseFloat(cur_rect.attr("y")) + 
+                parseFloat(cur_rect.
+                    attr("height") / 2))
+              .style("font-size", height * 0.5)
+              .text(data.rslt_cn[i]);
+          })
+          x_rect_cord = draw_table(data.original, 
+            otbl_start["x"], otbl_start["y"], x_cord_o,
+            o_width, height, "o", parseInt(data.pivot_ind));
+          let all_o_rows = d3.selectAll(".o_rows")
+            .nodes();
+          let delay_time = 2000;
+          let msg = true;
+          let speed = data.speed;
+          let new_col_cnt = 2;
+          prepare_spread(ptxt_start, 
+            data.key[0], data.value[0], data.key_ind[0], 
+                key_rect_w， value_rect_w, data.key_seq, 
+                    height, delay_time, speed)
+                        .on("end", function () {
+              d3.selectAll(".r_rows").style("opacity", 1)
+              spread_anim_pivot(tbl_mid_xy, data.pivot[0], 
+                data.pivot_rows, speed, delay_time, msg = true)
+                .on("end", function () {
+                  d3.selectAll(".removed").remove();
+                  data.key_seq.forEach(function (d, i) {
+                    current_chunk = all_o_rows.
+                        slice(d["start"], d["stop"] + 1);
+                    delay_time = spread_anim_move(tbl_mid_xy, 
+                        current_chunk, data.key_rowseq[i],
+                      data.key_ind[0], new_col_cnt, 
+                        data.value_ind[0], speed, delay_time, 
+                            msg);
+                    msg = false;
+                    new_col_cnt++;
+                  })
+                  spread_anim_fillna(data.na_pos, speed, 
+                    delay_time);
+                })
+            });
+        },
+        resize: function (width, height) {}
+      };
+    }
+  });
+
+\end{lstlisting}
+
+\subsection{\textbf{htmlwidgets} \textsf{JavaScript} code for \texttt{gather\_anim} \textbf{R}}
+
+\begin{lstlisting}
+HTMLWidgets.widget({
+    name: 'gather_anim',
+    type: 'output',
+    factory: function (el, width, height) {
+        let svg_width = width * 0.8;
+        let svg_height = svg_width / 1.6;
+        return {
+            renderValue: function (x) {
+                let data = x.data;
+                svg_div = "animpanel0";
+                let otbl_width = arr_sum(data.og_w[0]);
+                let rtbl_width = arr_sum(data.rslt_w[0]);
+                let or_width = otbl_width + rtbl_width;
+                let cell_height = data.height[0];
+                let xscale_num = (or_width + 1.5 * 
+                    rtbl_width) / 0.9;
+                let yscale_num = cell_height * 
+                    (data.result.length +  data.result.length 
+                        - 1) / 0.9;
+                el = d3.select("body")
+                    .append("div")
+                    .attr("id", svg_div);
+                el.append("svg")
+                    .attr("width", svg_width)
+                    .attr("height", svg_height);
+                let x_scale =
+                    d3.scaleLinear()
+                    .domain([0, xscale_num])
+                    .range([0, svg_width]);
+                let y_scale =
+                    d3.scaleLinear()
+                    .domain([0, yscale_num])
+                    .range([0, svg_height]);
+                let height = y_scale(cell_height);
+                let otbl_start = {
+                    x: svg_width * 0.05,
+                    y: svg_height * 0.25
+                }
+                let ptxt_start = {
+                    x: svg_width * 0.015,
+                    y: svg_height * 0.05
+                }
+                let o_width = arr_scale(data.og_w[0], 
+                    x_scale);
+                let x_cord_o = arr_scale(data.og_cord_x, 
+                    x_scale);
+                let rslt_cord_x = arr_scale(data.rslt_cord_x, 
+                    x_scale);
+                let r_width = arr_scale(data.rslt_w[0], 
+                    x_scale);
+                let r_tbl_tl = {
+                    x: svg_width - svg_width * 0.05 - 
+                        arr_sum(r_width),
+                    y: otbl_start["y"]
+                };
+                let key_rect_w = x_scale(data.rslt_w[0]
+                    [data.key_ind[0] - 1]);
+                let value_rect_w = x_scale(data.rslt_w[0]
+                    [data.value_ind[0] - 1]);
+                let tbl_mid_xy = {
+                    x: svg_width / 2,
+                    y: svg_height / 2
+                };
+                draw_table_rectonly(data.result, 
+                    r_tbl_tl["x"], r_tbl_tl["y"], rslt_cord_x,
+                    r_width, height, "r", 
+                        parseInt(data.pivot_ind));
+                d3.selectAll(".r_rows")
+                    .style("opacity", 0);
+                input_text_node = d3.select(".r_rows").
+                    selectAll(".r_cols").nodes();
+                input_text_node.forEach(function (d, i) {
+                    cur_rect = d3.select(input_text_node[i])
+                        .select("rect");
+                    d3.select(input_text_node[i])
+                        .append("text")
+                        .attr("x", parseFloat
+                            (cur_rect.attr("x")) +     
+                                parseFloat(cur_rect.
+                                    attr("width") / 2)).attr("y", 
+                            parseFloat(cur_rect.attr("y")) + 
+                                parseFloat(cur_rect.
+                                    attr("height") / 2))
+                        .style("font-size", height * 0.5)
+                        .text(data.rslt_cn[i]);
+                })
+                x_rect_cord = draw_table(data.original, 
+                    otbl_start["x"], otbl_start["y"], x_cord_o,
+                    o_width, height, "o", 
+                        parseInt(data.pivot_ind));
+                let all_o_rows = d3.selectAll(".o_rows")
+                    .nodes();
+                let all_r_rows = d3.selectAll(".r_rows")
+                    .nodes();
+                let speed = 1;
+                let chunk_increment = all_o_rows.length - 1;
+                let start_chunk = 1;
+                let delay_time = 0;
+                let tran_time = 2500 / speed;
+                let msg = true;
+                let first = true;
+         prepare_gather(ptxt_start, data.col_ind, 
+            data.key[0], data.value[0], key_rect_w, 
+                value_rect_w, height, delay_time, 1)
+            .on("end", function () {
+                data.col_ind.forEach(function (d, i) {
+                    end_chunk = start_chunk + 
+                    chunk_increment;
+                    current_chunk = all_r_rows.
+                    slice(start_chunk, end_chunk)
+                    delay_time = gather_anim_pivot
+                    (tbl_mid_xy, current_chunk, 1, 1, 
+                    speed, delay_time, msg, first);
+                    delay_time = gather_anim_key
+                        (tbl_mid_xy, current_chunk, 
+                            data.col[i], d, data.key[0], 
+                                data.key_ind[0], speed, 
+                                    delay_time, msg);
+                    delay_time = gather_anim_value
+                        (tbl_mid_xy, current_chunk, data.col[i],d, 
+                            data.value[0], data.value_ind[0], 
+                                speed, delay_time, msg);
+                    if (data.col.length - 1 != i) {
+                        iso_msgbox(tbl_mid_xy["x"], 
+                            tbl_mid_xy["y"], height * 15, 
+                                height,`Now start moving 
+                                    the information about 
+                                        ${data.col[i + 1]} into 
+                                    place `, delay_time, 
+                                        tran_time,  0.5, 
+                                            tran_time / 2);
+                    delay_time = delay_time + tran_time;
+                            }
+                            msg = false;
+                            first = false;
+                            start_chunk = end_chunk;
+                        })
+                    });
+            },
+            resize: function (width, height) {}
+        };
+    }
+});
+\end{lstlisting}
+
+\section{Helper function for both modules}
+
+\begin{lstlisting}
+include_cn = function(obj, ...){
+  obj = as_tibble(apply(obj, 2, function(x) {
+    if(is.numeric(x)) {
+      x = round(x, 3)
+    }
+    return(x)
+  }))
+  return(rbind(colnames(obj), obj))
+}
+outersect = function(x, y){
+  sort(c(setdiff(x, y),
+         setdiff(y, x)))
+}
+col_max_width = function(obj, width, ...){
+  obj = as_tibble(apply(obj, 2, as.character))
+  obj = obj %>% transmute_all(nchar) %>%
+    summarise_all(max, na.rm = T) %>% as.matrix()
+  obj = ifelse(obj < width, width, obj)
+  return(obj)
+}
+tbl_cord_x = function(x) {
+  x = cumsum(x)
+  return(c(0, x[-length(x)]))
+}
+is.integer0 <- function(x){
+  is.integer(x) && length(x) == 0L
+}
+prepare_table = function(data, height = 3, width = 3) {
+  data = include_cn(data)
+  col_width = col_max_width(data)
+  col_width = ifelse(col_width < width, width, col_width)
+  return(list(data = data, col_width = col_width,
+              height = height,
+              cord_x = tbl_cord_x(col_width)))
+}
+num_colcharacter = function(df, key) {
+  if(missing(key)) {
+    stop("Must supply key")
+  }
+  df = df %>% select(-key)
+  info = sapply(df, class)
+  return(max(sum(info == "numeric"), sum(info == "factor")))
+  }
+
+
+\end{lstlisting}

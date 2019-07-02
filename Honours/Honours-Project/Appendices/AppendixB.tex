@@ -1,0 +1,1740 @@
+% Appendix A
+
+\chapter{Codes} \label{AppendixB}
+
+\section{svydbdesign}
+\begin{lstlisting}
+makesvydbdesign <- R6Class("svydb.design", 
+                            public = list(dataOg = NULL, 
+                            data = NULL, dataSub = NULL, 
+                            vars = NULL, st = NULL, 
+                            id = NULL, wt = NULL, 
+                            call = NULL, names = list(), 
+                            levels = list(), 
+    initialize = function(vars = NA, 
+        st = NA, id = NA, wt = NA, data) {
+        if (quo_is_null(wt)) {
+            stop("Please provide sampling weights")
+        } else {
+            self$wt = as.character(wt)[2]
+        }
+        
+        if (quo_is_null(st)) {
+            data = data %>% mutate(st = 1)
+            self$st = "st"
+        } else {
+            self$st = as.character(st)[2]
+        }
+        
+        if (quo_is_null(id)) {
+            data = data %>% mutate(id = row_number())
+            self$id = "id"
+        } else {
+            self$id = as.character(id)[2]
+        }
+        self$data = data %>% select(everything())
+        self$dataOg <<- self$data
+    }, 
+    setx = function(x) {
+        tc = tryCatch(class(x), error = function(e) e)
+        
+        if ("formula" %in% tc) {
+            x = all.vars(x)
+            self$data <<- self$data %>% 
+                select(!!x, self$st, self$id, self$wt) %>% 
+                filter_all(any_vars(!is.na(.)))
+            self$vars <<- x
+        } else {
+            x = enquo(x)
+            self$data <<- self$data %>% 
+                select(!!x, self$st, self$id, self$wt) %>% 
+                filter(!is.na(!!x))
+            self$vars <<- as.character(x)[2]
+        }
+        self$names[["logged"]] = 
+            c(self$st, self$id, self$wt, "m_h")
+    }, 
+    addx = function(x) {
+        l = enquo(x)
+        r = syms(colnames(self$data))
+        self$data = self$dataOg %>% select(!!l, !!!r)
+    }, 
+    getwt = function() {
+        self$data %>% select(self$wt) %>% 
+            summarise_all(sum) %>% pull()
+    }, 
+    getmh = function() {
+        self$data %>% group_by(!!sym(self$st)) %>% 
+            summarise(m_h = n_distinct(!!sym(self$id)))
+    }, 
+    subset = function(..., logical = T) {
+        d = self$clone()
+        
+        if (logical == T) {
+            d$data = d$data %>% filter(...)
+        } else {
+            d$data = d$data %>% filter(!!parse_expr(...))
+        }
+        return(d)
+    }, 
+    subset_rows = function(from, to) {
+        self$dataSub = self$data %>% 
+            db_selectRows(., from = from, to = to)
+    }, 
+    storename = function(name, obj, force = FALSE) {
+        if (force == TRUE) {
+            self$names$logged = 
+                self$names$logged[-which(
+                        self$names$logged %in% obj)]
+        }
+        if (!all(obj %in% self$names$logged)) {
+            new = setdiff(obj, self$names$logged)
+            self$names[[name]] = c(new)
+            self$names$logged = c(self$names$logged, new)
+        }
+        
+    }, 
+    removename = function(name, obj) {
+        self$names$logged = 
+            self$names$logged[-which(
+                self$names$logged %in% obj)]
+        self$names[[name]] = 
+            (self$names[[name]])[-which(
+                self$names[[name]] %in% obj)]
+    }, 
+    storelevel = function(x, name) {
+        ll = list(x)
+        names(ll) = name
+        self$levels = c(self$levels, ll)
+    }, 
+    storecall = function(x) {
+        self$call = x
+    }, 
+    print = function() {
+        nid = self$getmh() %>% pull(m_h) %>% sum()
+        rows = self$data %>% db_nrow()
+        txt = sprintf("svydb.design, 
+            %s observation(s), %s Clusters\n", 
+            rows, nid)
+        cat(txt)
+    }))
+
+svydbdesign = function(st = NULL, id = NULL, 
+                            wt = NULL, data){
+  st = enquo(st)
+  id = enquo(id)
+  wt = enquo(wt)
+
+  d = makesvydbdesign$new(st = st, id = id, wt = wt,
+                          data = data)
+  d$storecall(match.call())
+  d
+}
+\end{lstlisting}}
+
+%----------------------------------------------------------------
+\section{svydbtotal}
+
+\begin{lstlisting}
+svydbtotal = function(x, num, design, 
+                     return.total = F, ...) {
+
+    if (!("svydb.design" %in% class(design))) {
+        stop("Please provide a svydb.design")
+    }
+
+    if (missing(num)) {
+        stop("Is x a numeric or categorical variable?
+            , num = T OR num = F?")
+    }
+
+    dsn = design$clone()
+    dsn$setx(!!enquo(x))
+    d = dsn$data
+    dsn$storename("x", colnames(d))
+
+    if (num == F) {
+        d = dummy_mut(d, !!sym(dsn$names$x), withBase = T)
+    }
+    dsn$storename("x", colnames(d))
+    d = d %>% mutate_at(vars(dsn$names$x), 
+                        funs((. * !!sym(dsn$wt)))) %>% 
+            compute(temporary = T)
+
+    totTbl = d %>% select(dsn$names$x) %>% 
+                summarise_all(sum) %>% collect() %>% t()
+
+    if (return.total == TRUE) {
+        colnames(totTbl) = "Total"
+        return(totTbl)
+    }
+
+    varTbl = d %>% select(dsn$st, dsn$id, dsn$names$x) %>% 
+                    group_by(!!!syms(c(dsn$st, dsn$id))) %>% 
+                    summarise_at(vars(dsn$names$x),
+                                funs(sum(.))) %>% 
+                    compute(temporary = T)
+    varTbl = inner_join(varTbl, dsn$getmh(), by = dsn$st)
+
+    barTbl = varTbl %>% select(-one_of(dsn$id)) %>% 
+                        group_by(!!sym(dsn$st)) %>% 
+                        summarise_at(vars(dsn$names$x), 
+                                    funs(bar = sum(./m_h)))
+    dsn$storename("bar", colnames(barTbl))
+
+    varTbl = inner_join(varTbl, barTbl, by = dsn$st)
+    `zhi-zbar` = paste(dsn$names$x, "-", 
+                       dsn$names$bar, collapse = " ; ")
+    varTbl = varTbl %>% 
+        mutate(!!!parse_exprs(`zhi-zbar`)) %>% 
+        ungroup() %>% compute(temporary = T)
+    dsn$storename("diff", colnames(varTbl))
+
+    varTbl = sapply(dsn$names$diff, svydbVar, 
+                    st = dsn$st, m_h = "m_h", data = varTbl)
+
+    class(totTbl) = "svydbstat"
+    attr(totTbl, "var") = varTbl
+    attr(totTbl, "statistic") <- "Total"
+    attr(totTbl, "name") = dsn$names$x
+
+    return(totTbl)
+}
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydbmean}
+
+\begin{lstlisting}
+svydbmean = function(x, num, design, 
+                    return.mean = F, ...) {
+
+    if (!("svydb.design" %in% class(design))) {
+        stop("Please provide a svydb.design")
+    }
+
+    if (missing(num)) {
+        stop("Is x a numeric or categorical variable?, 
+             = T OR num = F?")
+    }
+
+    dsn = design$clone()
+    dsn$setx(!!enquo(x))
+    d = dsn$data
+    dsn$storename("x", colnames(d))
+
+    if (num == F) {
+        d = dummy_mut(d, !!sym(dsn$names$x), withBase = T)
+    }
+
+    dsn$storename("x", colnames(d))
+    N = dsn$getwt()
+    meanTbl = d %>% 
+              transmute_at(vars(dsn$names$x), 
+                           funs((. * !!sym(dsn$wt))
+                                        /!!quo(N))) %>% 
+              summarise_all(sum) %>%
+              compute(temporary = T) %>% collect()
+
+    if (return.mean == TRUE) {
+        colnames(meanTbl) = dsn$names$x
+        return(meanTbl)
+    }
+
+    dhi_exprs = paste(dsn$names$x, " - ", "meanTbl$", 
+                      dsn$names$x, sep = "", 
+                      collapse = " ; ")
+    varTbl = d %>% mutate(dhi = !!!parse_exprs(dhi_exprs))
+    dsn$storename("dhi", colnames(varTbl))
+
+    varTbl = varTbl %>% 
+                mutate_at(vars(dsn$names$dhi), 
+                funs((. * !!sym(dsn$wt))/!!quo(N))) %>% 
+                select(dsn$st, dsn$id,
+                dsn$names$dhi)
+
+    barTbl = varTbl %>% select(dsn$st, dsn$names$dhi) %>% 
+             group_by(!!sym(dsn$st)) %>% summarise_all(sum)
+    barTbl = inner_join(barTbl, dsn$getmh(), 
+        by = dsn$st) %>% 
+        mutate_at(vars(dsn$names$dhi),
+        funs(bar = ./m_h)) %>%
+        select(-one_of(dsn$names$dhi))
+    dsn$storename("bar", colnames(barTbl))
+
+    varTbl = varTbl %>% 
+             group_by(!!!syms(c(dsn$st, dsn$id))) %>% 
+             summarise_all(sum) %>% compute(temporary = T)
+    varTbl = inner_join(varTbl, barTbl, by = dsn$st)
+
+    `dhi-dbar` = paste("`", dsn$names$dhi, "`", "-", 
+                       "`", dsn$names$bar, "`", 
+                       collapse = " ; ", sep = "")
+    varTbl = varTbl %>% 
+             mutate(!!!parse_exprs(`dhi-dbar`)) %>% 
+             ungroup() %>% compute(temporary = T)
+    dsn$storename("diff", colnames(varTbl))
+
+    varTbl = sapply(dsn$names$diff, svydbVar, 
+                    st = dsn$st, m_h = "m_h", data = varTbl)
+
+    meanTbl = t(meanTbl)
+    class(meanTbl) = "svydbstat"
+    attr(meanTbl, "var") = varTbl
+    attr(meanTbl, "statistic") <- "Mean"
+    attr(meanTbl, "name") = dsn$names$x
+
+    return(meanTbl)
+}
+
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydblm}
+
+\begin{lstlisting}
+svydblm = function(formula, design) {
+    if (!("svydb.design" %in% class(design))) {
+        stop("Please provide a svydb.design")
+    }
+    
+    if (missing(formula)) {
+        stop("Please provide a formula")
+    }
+    
+    fit = list()
+    fit$call = match.call()
+    dsn = design$clone()
+    dsn$setx(formula)
+    d = dsn$data
+    dsn$storename("y", all.vars(formula)[1])
+    dsn$storename("variables", all.vars(formula)[-1])
+    
+    d = d %>% mutate(`:=`(!!sym(dsn$wt), 
+        case_when(is.na(!!sym(dsn$names$y)) ~ 
+        0, TRUE ~ !!sym(dsn$wt))))
+    d = d %>% mutate(`:=`(!!sym(dsn$names$y), 
+        case_when(is.na(!!sym(dsn$names$y)) ~ 
+            0, TRUE ~ !!sym(dsn$names$y))))
+    d = d %>% filter_all(all_vars(!is.na(.)))
+    d = d %>% mutate(intercept = 1)
+    dsn$storename("intercept", colnames(d))
+    xy = d
+    
+    facVar = attr(terms(formula, specials = "factor"), 
+        "specials")$factor
+    if (!is.null(facVar)) {
+        facVar = facVar - 1
+        dsn$storename("factor", dsn$names$variables[facVar], 
+            force = T)
+        for (i in 1:length(facVar)) {
+            dd = dummy_mut(xy, by = 
+                !!sym(dsn$names$factor[i]), 
+                withBase = F, return.level = T)
+            xy = dd$dum
+            dsn$storelevel(x = dd$levels, 
+                name = dsn$names$factor[i])
+            dsn$names$variables = c(dsn$names$variables, 
+                dsn$names$factor[i])
+            dsn$names$variables = 
+                dsn$names$variables[-(grep(
+                dsn$names$factor[i], 
+                dsn$names$variables)[1])]
+        }
+    }
+    
+    fit$terms = terms(paste("~", paste(dsn$names$variables, 
+        collapse = " + ")) %>% as.formula)
+    dsn$storename("dummy", colnames(xy))
+    xy = compute(xy)
+    dsn$storename("variables", c(dsn$names$variables, 
+        dsn$names$dummy), force = T)
+    
+    if (!is.null(facVar)) {
+        dsn$removename("variables", dsn$names$factor)
+    }
+    db_xtwx_i = function(x, col, wt, data) {
+        data = data %>% summarise_at(vars(x), 
+            funs(xtx = sum(. * (!!sym(col)) * 
+                (!!sym(wt)))))
+        return(data)
+    }
+    xtx = lapply(c(dsn$names$intercept, 
+        dsn$names$variables), db_xtwx_i, 
+        x = c(dsn$names$intercept, 
+        dsn$names$variables), wt = dsn$wt, 
+        data = xy)
+    xtx = Reduce(full_join, xtx) %>% collect() %>% 
+        as.matrix()
+    colnames(xtx) = 
+        c(dsn$names$intercept, dsn$names$variables)
+    
+    xty = xy %>% transmute_at(vars(dsn$names$intercept, 
+        dsn$names$variables), funs(. * (!!sym(dsn$wt)) * 
+        (!!sym(dsn$names$y)))) %>% summarise_all(sum) %>% 
+        collect() %>% t()
+    
+    xy = xy %>% filter(!(!!sym(dsn$wt)) == 0) %>% 
+        compute()
+    beta = solve(xtx) %*% xty
+    fit$coefname = 
+        c(dsn$names$intercept, dsn$names$variables)
+    fit$coefficients = beta %>% t()
+    
+    
+    dsn$storename("xb", paste(dsn$names$variables, 
+        "_xb", sep = ""))
+    e = paste(dsn$names$y, " - ", beta["intercept", 
+        ], " - ", paste(rownames(beta)[-1], " * ", 
+        beta[-1, ], sep = "", collapse = " - "), 
+        sep = "")
+    
+    xy = xy %>% mutate(residuals = !!parse_expr(e)) %>% 
+        select(-one_of(dsn$names$y))
+    dsn$storename("residuals", colnames(xy))
+    res = xy %>% select(residuals)
+    fit$residuals = res
+    
+    varTbl = xy %>% mutate_at(vars(dsn$names$intercept, 
+        dsn$names$variables), 
+        funs(. * (!!sym(dsn$names$residuals)) * 
+        (!!sym(dsn$wt)))) %>% group_by(!!sym(dsn$st), 
+        !!sym(dsn$id)) %>% summarise_all(sum) %>% 
+        compute()
+    dsn$storename("zhi", c(dsn$names$intercept, 
+        dsn$names$variables), force = T)
+    barTbl = varTbl %>% select(dsn$st, dsn$names$zhi) %>% 
+        group_by(!!sym(dsn$st)) %>% summarise_all(sum)
+    
+    mh = dsn$getmh()
+    barTbl = inner_join(barTbl, mh, by = dsn$st) %>% 
+        mutate_at(vars(dsn$names$intercept, 
+        dsn$names$variables), funs(bar = ./m_h)) %>% 
+        compute()
+    dsn$storename("bar", colnames(barTbl))
+    
+    varTbl = inner_join(varTbl %>% select(dsn$st, 
+        dsn$names$zhi), barTbl %>% select(dsn$st, 
+        dsn$names$bar, m_h), by = dsn$st)
+    `zhi-zbar` = paste("`", dsn$names$zhi, "`", 
+        "-", "`", dsn$names$bar, "`", collapse = " ; ", 
+        sep = "")
+    varTbl = varTbl %>% 
+        mutate(!!!parse_exprs(`zhi-zbar`)) %>% 
+        ungroup() %>% compute()
+    dsn$storename("diff", colnames(varTbl))
+    
+    covDiag = sapply(dsn$names$diff, svydbVar, 
+        st = dsn$st, m_h = "m_h", data = varTbl)
+    e = outer(dsn$names$diff, dsn$names$diff, 
+        paste, sep = ",")
+    e = e[lower.tri(e)] %>% strsplit(., ",")
+    covLt = sapply(e, svydbVar2, st = dsn$st, 
+        m_h = "m_h", data = varTbl)
+    cov.mat = diag(covDiag)
+    cov.mat[lower.tri(cov.mat)] = covLt
+    cov.mat[upper.tri(cov.mat)] = 
+        t(cov.mat)[upper.tri(cov.mat)]
+    
+    fit$cov.unscaled = solve(xtx) %*% cov.mat %*% 
+        solve(xtx)
+    colnames(fit$cov.unscaled) = rownames(fit$cov.unscaled)
+    
+    fit$formula = formula
+    fit$df.residual = sum(mh %>% select(m_h) %>% 
+        pull) - db_nrow(mh) - nrow(beta) + 1
+    fit$call = match.call()
+    fit$design = dsn
+    
+    class(fit) = c("svydblm", "lm")
+    return(fit)
+}
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydbquantile}
+
+\begin{lstlisting}
+svydbquantile = function(x, quantiles = 0.5, design) {
+    oldoptions = options("survey.lonely.psu")
+    options(survey.lonely.psu = "adjust")
+    
+    dsn = design$clone()
+    dsn$setx(!!enquo(x))
+    d = dsn$data
+    dsn$storename("x", colnames(d))
+    
+    q_name = quantiles
+    qvec = c()
+    b = T
+    
+    for (i in 1:length(quantiles)) {
+        if (quantiles[i] >= 1) {
+            qvec[i] = 
+                dbmax(data = d, var = !!sym(dsn$names$x))
+        } else if (quantiles[i] <= 0) {
+            qvec[i] = 
+                dbmin(data = d, var = !!sym(dsn$names$x))
+        } else {
+            if (b) {
+                N = dsn$getwt()
+                nrowdata = db_nrow(d)
+                sampN = ceiling(nrowdata^(2/3))
+                d = compute(d)
+                
+                if (!is.null(d$src$con)) {
+                  sdata = d %>% 
+                    svydb_monet_sampleN(sampN) %>% 
+                    tbl_df()
+                } else {
+                  sdata = d %>% sample_n(sampN) %>% 
+                    tbl_df()
+                }
+                
+                sdata = 
+                    sdata %>% rename(x = !!sym(dsn$names$x))
+                s.surv = svydesign(id = c2f(dsn$id), 
+                  st = c2f(dsn$st), weights = c2f(dsn$wt), 
+                  data = sdata, nest = T)
+                b = F
+            }
+            notfound = TRUE
+            
+            while (notfound) {
+                q = svyquantile(~x, s.surv, quantiles[i], 
+                  alpha = 0.1, ci = TRUE, na.rm = T)
+                
+                temp_lq = q$CIs[1]
+                temp_uq = q$CIs[2]
+                
+                readIn = d %>% select(x = dsn$names$x, 
+                  wt = dsn$wt) %>% filter(x >= temp_lq & 
+                  x <= temp_uq)
+                readIn_wts = readIn %>% select(wt) %>% 
+                  summarise(sum(wt)) %>% pull()
+                notRead = d %>% select(x = dsn$names$x, 
+                  wt = dsn$wt) %>% filter(x < temp_lq)
+                notRead_wts = notRead %>% select(wt) %>% 
+                  summarise(sum(wt)) %>% pull()
+                
+                thold = (N * quantiles[i])
+                if ((notRead_wts <= thold) & (thold < 
+                  (readIn_wts + notRead_wts))) {
+                  qs = readIn %>% arrange(x)
+                  qs = qs %>% collect() %>% 
+                    mutate(wt2 = cumsum(wt))
+                  c_wts = N * quantiles[i] - notRead_wts
+                  qs = qs %>% 
+                    filter(wt2 >= !!quo(c_wts)) %>% 
+                    select(x) %>% slice(1) %>% pull()
+                  qvec[i] = qs
+                  notfound = F
+                } else {
+                  if (!is.null(d$src$con)) {
+                    sdata = d %>% 
+                        svydb_monet_sampleN(sampN) %>% 
+                        tbl_df() %>% 
+                        rename(x = !!sym(dsn$names$x))
+                  } else {
+                    sdata = d %>% sample_n(sampN) %>% 
+                      tbl_df() %>% 
+                      rename(x = !!sym(dsn$names$x))
+                  }
+                  s.surv = svydesign(id = c2f(dsn$id), 
+                    st = c2f(dsn$st), weights = c2f(dsn$wt), 
+                    data = sdata, nest = T)
+                }
+            }
+        }
+    }
+    names(qvec) = as.character(q_name)
+    options(oldoptions)
+    return(qvec)
+}
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydbtable}
+
+\begin{lstlisting}
+svydbtable = function(formula, design, as.local = F) {
+    
+    dsn = design$clone()
+    dsn$setx(formula)
+    d = dsn$data
+    d = d %>% filter_all(all_vars(!is.na(.)))
+    dsn$storename("all", colnames(d))
+    
+    ff = all.vars(formula)
+    dsn$storename("base", ff[1], force = T)
+    
+    if (length(ff) == 1) {
+        out = d %>% group_by(!!sym(dsn$names$base)) %>% 
+            summarise(wt = sum(!!sym(dsn$wt))) %>% 
+            arrange(!!sym(dsn$names$base))
+        if (as.local == T) {
+            out = collect(out)
+        }
+        return(out)
+    }
+    
+    dsn$storename("by", ff[2], force = T)
+    d = d %>% select(dsn$names$all, dsn$wt) %>% 
+        dummy_mut(data = ., by = !!sym(dsn$names$by), 
+            withBase = T)
+    dsn$storename("dummy", colnames(d))
+    d = d %>% select(-one_of(dsn$names$by))
+    d = compute(d)
+    
+    if (length(ff) == 2) {
+        out = d %>% group_by(!!sym(dsn$names$base)) %>% 
+            summarise_at(vars(dsn$names$dummy), 
+                funs(sum(. * (!!sym(dsn$wt))))) %>% 
+            arrange(!!sym(dsn$names$base))
+        if (as.local == T) {
+            out = collect(out)
+        }
+        return(out)
+    }
+    
+    dsn$storename("others", ff[-c(1, 2)], force = T)
+    d = db_columnAsCharacter(d, dsn$names$others)
+    combnTbl = d %>% select(dsn$names$others) %>% 
+        distinct() %>% 
+        arrange(!!!syms(dsn$names$others)) %>% 
+        collect()
+    combnLst = split(combnTbl, seq(1, nrow(combnTbl)))
+    
+    sTbls = function(by) {
+        nname = paste(colnames(by), " = ", by, sep = "",
+            collapse = " & ")
+        con = gsub(pattern = "=", replacement = "==", 
+            nname)
+        d = d %>% filter(!!parse_expr(con)) %>% 
+            select(-one_of(colnames(by))) %>% 
+            group_by(!!sym(dsn$names$base)) %>% 
+            summarise_at(vars(dsn$names$dummy), 
+                funs(sum(. * (!!sym(dsn$wt))))) %>% 
+            arrange(!!sym(dsn$names$base)) %>% 
+            list(.)
+        names(d) = nname
+        d
+    }
+    out = lapply(combnLst, sTbls) %>% flatten()
+    
+    if (as.local == T) {
+        out = lapply(out, collect)
+    }
+    
+    return(out)
+}
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydbby}
+
+\begin{lstlisting}
+svydbtable = function(formula, design, as.local = F) {
+    
+    dsn = design$clone()
+    dsn$setx(formula)
+    d = dsn$data
+    d = d %>% filter_all(all_vars(!is.na(.)))
+    dsn$storename("all", colnames(d))
+    
+    ff = all.vars(formula)
+    dsn$storename("base", ff[1], force = T)
+    
+    if (length(ff) == 1) {
+        out = d %>% group_by(!!sym(dsn$names$base)) %>% 
+            summarise(wt = sum(!!sym(dsn$wt))) %>% 
+            arrange(!!sym(dsn$names$base))
+        if (as.local == T) {
+            out = collect(out)
+        }
+        return(out)
+    }
+    
+    dsn$storename("by", ff[2], force = T)
+    d = d %>% select(dsn$names$all, dsn$wt) %>% 
+        dummy_mut(data = ., by = !!sym(dsn$names$by), 
+            withBase = T)
+    dsn$storename("dummy", colnames(d))
+    d = d %>% select(-one_of(dsn$names$by))
+    d = compute(d)
+    
+    if (length(ff) == 2) {
+        out = d %>% group_by(!!sym(dsn$names$base)) %>% 
+            summarise_at(vars(dsn$names$dummy), 
+                funs(sum(. * (!!sym(dsn$wt))))) %>% 
+            arrange(!!sym(dsn$names$base))
+        if (as.local == T) {
+            out = collect(out)
+        }
+        return(out)
+    }
+    
+    dsn$storename("others", ff[-c(1, 2)], force = T)
+    combnTbl = d %>% select(dsn$names$others) %>% 
+        distinct() %>% 
+        arrange(!!!syms(dsn$names$others)) %>% 
+        collect()
+    combnLst = split(combnTbl, seq(1, nrow(combnTbl)))
+    
+    sTbls = function(by) {
+        nname = paste(colnames(by), " = ", by, 
+            collapse = " & ")
+        con = gsub(pattern = "=", replacement = "==", 
+            nname)
+        d = d %>% filter(!!parse_expr(con)) %>% 
+            select(-one_of(colnames(by))) %>% 
+            group_by(!!sym(dsn$names$base)) %>% 
+            summarise_at(vars(dsn$names$dummy), 
+                funs(sum(. * (!!sym(dsn$wt))))) %>% 
+            arrange(!!sym(dsn$names$base)) %>% 
+            list(.)
+        names(d) = nname
+        d
+    }
+    out = lapply(combnLst, sTbls) %>% flatten()
+    
+    if (as.local == T) {
+        out = lapply(out, collect)
+    }
+    
+    return(out)
+}
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydbrepdesign}
+
+\begin{lstlisting}
+makesvydbrepdesign <- R6Class("svydb.repdesign", 
+    public = list(dataOg = NULL, data = NULL, 
+        vars = NULL, st = NULL, id = NULL, wt = NULL, 
+        repwt = NULL, scale = NULL, names = list(), 
+        initialize = function(vars = NA, st = NA, 
+            id = NA, wt = NA, repwt = NULL, scale, 
+            data) {
+            
+            if (quo_is_null(wt)) {
+                stop("Please provide sampling weights")
+            } else {
+                self$wt = as.character(wt)[2]
+            }
+            
+            if (is.null(repwt)) {
+                stop("Please provide replicate weights")
+            } else {
+                self$repwt = grep(pattern = repwt, 
+                  colnames(data), value = T)
+            }
+            
+            if (quo_is_null(st)) {
+                data = data %>% mutate(st = 1)
+                self$st = "st"
+            } else {
+                self$st = as.character(st)[2]
+            }
+            
+            if (quo_is_null(id)) {
+                data = data %>% mutate(id = row_number())
+                self$id = "id"
+            } else {
+                self$id = as.character(id)[2]
+            }
+            self$scale = scale
+            self$data = data %>% select(everything())
+            self$dataOg <<- self$data
+        }, setx = function(x) {
+            tc = tryCatch(class(x), error = function(e) e)
+            
+            if ("formula" %in% tc) {
+                x = all.vars(x)
+                self$data <<- self$data %>% select(!!x, 
+                  st = self$st, id = self$id, 
+                  self$wt, self$repwt) %>% 
+                  filter_all(any_vars(!is.na(.)))
+                self$vars <<- x
+            } else {
+                x = enquo(x)
+                self$data <<- self$data %>% select(!!x, 
+                  st = self$st, id = self$id, 
+                  self$wt, self$repwt) %>% 
+                  filter(!is.na(!!x))
+                self$vars <<- as.character(x)[2]
+            }
+            self$names[["logged"]] = c(self$st, 
+                self$id, self$wt, self$repwt, 
+                "m_h")
+        }, addx = function(x) {
+            l = enquo(x)
+            r = syms(colnames(self$data))
+            self$data = self$dataOg %>% select(!!l, 
+                !!!r)
+        }, getwt = function() {
+            self$data %>% select(self$wt) %>% 
+                summarise_all(sum) %>% pull()
+        }, getmh = function() {
+            self$data %>% group_by(!!sym(self$st)) %>% 
+                summarise(m_h = n_distinct(!!sym(self$id)))
+        }, subset = function(..., logical = T) {
+            d = self$clone()
+            if (logical == T) {
+                d$data = d$data %>% filter(...)
+            } else {
+                d$data = d$data %>% 
+                    filter(!!parse_expr(...))
+            }
+            return(d)
+        }, subset_rows = function(from, to) {
+            self$dataSub = self$data %>% db_selectRows(., 
+                from = from, to = to)
+        }, storename = function(name, obj, force = FALSE) {
+            if (force == TRUE) {
+                self$names$logged = 
+                    self$names$logged[-which(
+                        self$names$logged %in% obj)]
+            }
+            if (!all(obj %in% self$names$logged)) {
+                new = setdiff(obj, self$names$logged)
+                self$names[[name]] = c(new)
+                self$names$logged = c(self$names$logged, 
+                  new)
+            }
+        }, removename = function(name, obj) {
+            self$names$logged = 
+                self$names$logged[-which(
+                    self$names$logged %in% obj)]
+            self$names[[name]] = 
+                (self$names[[name]])[-which(
+                        self$names[[name]] %in% obj)]
+        }, print = function() {
+            rows = self$data %>% db_nrow()
+            txt = sprintf("svydb.repdesign, 
+                %s observation(s), %s sets of 
+                replicate weights, scale = %s", 
+                rows, length(self$repwt), self$scale)
+            cat(txt)
+}))
+
+svydbrepdesign = function(st = NULL, id = NULL, 
+    wt = NULL, repwt = NULL, scale, data) {
+    st = enquo(st)
+    id = enquo(id)
+    wt = enquo(wt)
+    
+    d = makesvydbrepdesign$new(st = st, id = id, 
+        wt = wt, repwt = repwt, scale = scale, 
+        data = data)
+    d
+}
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydbreptotal}
+
+\begin{lstlisting}
+svydbreptotal = function(x, design, 
+            num, return.replicates = F) {
+    x = enquo(x)
+    
+    if (!("svydb.repdesign" %in% class(design))) {
+        stop("Please provide a svydb.repdesign")
+    }
+    
+    if (missing(num)) {
+        stop("Is x a numeric or categorical variable?, 
+            num = T OR num = F?")
+    }
+    
+    dsn = design$clone()
+    dsn$setx(!!enquo(x))
+    
+    d = dsn$data
+    
+    dsn$storename("x", colnames(d))
+    
+    if (num == F) {
+        d = dummy_mut(d, !!sym(dsn$names$x), withBase = T)
+    }
+    
+    dsn$storename("x", colnames(d))
+    
+    fullTotTbl = d %>% summarise_at(vars(dsn$names$x), 
+        funs(sum(. * (!!sym(dsn$wt))))) %>% collect()
+    
+    cnt = 1
+    getRepTots = function(names, fullTot) {
+        replicates = d %>% summarise_at(vars(dsn$repwt), 
+            funs(sum((. * !!sym(names))))) %>% 
+            collect()
+        repTot = replicates %>% summarise_all(funs((. - 
+            !!quo(fullTot[cnt]))^2))
+        cnt <<- cnt + 1
+        if (return.replicates == T) {
+            list(replicates = replicates, 
+                repVar = db_rowSums(repTot) %>% 
+                transmute_all(
+                    funs(. * !!quo(dsn$scale))) %>% 
+                collect())
+        } else {
+            list(repVar = db_rowSums(repTot) %>% 
+                transmute_all(funs(. * 
+                    !!quo(dsn$scale))) %>% 
+                collect())
+        }
+    }
+    
+    ans = lapply(colnames(fullTotTbl), getRepTots, 
+        fullTot = as.vector(t(fullTotTbl)))
+    repVar = lapply(ans, function(x) x$repVar) %>% 
+        Reduce(rbind, .) %>% pull()
+    
+    tot = fullTotTbl %>% t() %>% as.vector()
+    attr(tot, "var") = repVar
+    attr(tot, "statistic") <- "Total"
+    attr(tot, "name") = dsn$names$x
+    
+    if (return.replicates == T) {
+        replicates = 
+            lapply(ans, function(x) x$replicates %>% 
+            collect()) %>% Reduce(rbind, .)
+        tot = list(svydbrepstat = tot, 
+            replicates = replicates)
+    }
+    class(tot) = c("svydbrepstat")
+    return(tot)
+}
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydbrepmean}
+
+\begin{lstlisting}
+svydbrepmean = function(x, design, num, 
+                    return.replicates = F) {
+    x = enquo(x)
+    
+    if (!("svydb.repdesign" %in% class(design))) {
+        stop("Please provide a svydb.repdesign")
+    }
+    
+    if (missing(num)) {
+        stop("Is x a numeric or categorical variable?, 
+            num = T OR num = F?")
+    }
+    
+    dsn = design$clone()
+    dsn$setx(!!enquo(x))
+    
+    d = dsn$data
+    
+    dsn$storename("x", colnames(d))
+    
+    if (num == F) {
+        d = dummy_mut(d, !!sym(dsn$names$x), withBase = T)
+    }
+    
+    dsn$storename("x", colnames(d))
+    
+    N = dsn$getwt()
+    fullMeanTbl = d %>% summarise_at(vars(dsn$names$x), 
+        funs(sum(. * (!!sym(dsn$wt)))/!!quo(N))) %>% 
+        collect()
+    
+    repN = d %>% select(dsn$repwt) %>% 
+        summarise_all(sum) %>% 
+        collect()
+    repN = paste(colnames(repN), "/", repN, 
+        collapse = " ; ")
+    cnt = 1
+    getRepTots = function(names, fullMean) {
+        replicates = d %>% summarise_at(vars(dsn$repwt), 
+            funs(sum(. * !!sym(names)))) %>% 
+            transmute(!!!parse_exprs(repN)) %>% 
+            compute()
+        repMean = replicates %>% summarise_all(funs((. - 
+            !!quo(fullMean[cnt]))^2))
+        cnt <<- cnt + 1
+        if (return.replicates == T) {
+            list(replicates = replicates, 
+                repVar = db_rowSums(repMean) %>% 
+                transmute_all(funs(. * 
+                    !!quo(dsn$scale))) %>% 
+                collect())
+        } else {
+            list(repVar = db_rowSums(repMean) %>% 
+                transmute_all(funs(. * 
+                    !!quo(dsn$scale))) %>% 
+                collect())
+        }
+    }
+    ans = lapply(colnames(fullMeanTbl), getRepTots, 
+        fullMean = as.vector(t(fullMeanTbl)))
+    repVar = lapply(ans, function(x) x$repVar) %>% 
+        Reduce(rbind, .) %>% pull()
+    
+    means = fullMeanTbl %>% t() %>% as.vector()
+    attr(means, "var") = repVar
+    attr(means, "statistic") <- "Mean"
+    attr(means, "name") = dsn$names$x
+    
+    if (return.replicates == T) {
+        replicates = lapply(ans, function(x) 
+                x$replicates %>% 
+            collect()) %>% Reduce(rbind, .)
+        means = list(svydbrepstat = means, 
+            replicates = replicates)
+    }
+    class(means) = c("svydbrepstat")
+    return(means)
+}
+\end{lstlisting}
+
+
+%----------------------------------------------------------------
+\section{svydbhist}
+
+\begin{lstlisting}
+svydbhist = function(x, design, binwidth = NULL, 
+    xlab = "x", ylab = "Density", ...) {
+    
+    if (!("svydb.design" %in% class(design))) {
+        stop("Please provide a svydb.design")
+    }
+    
+    dsn = design$clone()
+    dsn$setx(!!enquo(x))
+    d = dsn$data
+    dsn$storename("x", colnames(d))
+    d_n = d %>% db_nrow()
+    
+    x_max = d %>% dbmax(!!sym(dsn$names$x), asNum = T)
+    x_min = d %>% dbmin(!!sym(dsn$names$x), asNum = T)
+    x_range = x_max - x_min
+    
+    if (is.null(binwidth)) {
+        binwidth = ceiling(log2(d_n) + 1)
+        pbreaks = pretty(c(x_min, x_max), n = binwidth, 
+            min.n = 1)
+    } else {
+        pbreaks = seq(from = floor(x_min), 
+            to = ceiling(x_max),
+            by = binwidth)
+    }
+    
+    d = db_cut2(var = !!sym(dsn$names$x), breaks = pbreaks, 
+        data = d) %>% arrange(cut)
+    dsn$data = d
+    
+    props = svydbmean(x = cut, design = dsn, num = F, 
+        return.mean = T) %>% collect() %>% t()
+    colnames(props) = "Mean"
+    
+    mids = pbreaks[-length(pbreaks)] + diff(pbreaks)/2
+    
+    if (length(mids) != nrow(props)) {
+        props = tbl_df(props) %>% 
+            mutate(uqid = row_number())
+        d = left_join(mids %>% tbl_df() %>% 
+            mutate(uqid = row_number()), 
+            props, by = "uqid")
+        d = d %>% mutate(Mean = case_when(is.na(Mean) ~ 
+            0, TRUE ~ Mean)) %>% select(-uqid)
+    } else {
+        d = cbind(mids, props) %>% tbl_df()
+    }
+    
+    colnames(d) = c("x", "y")
+    d$y = d$y/diff(pbreaks)
+    p = ggplot(d) + geom_col(aes(x, y)) +
+        labs(x = dsn$names$x, y = ylab)
+    
+    print(p)
+    
+    invisible(p)
+}
+\end{lstlisting}
+
+%----------------------------------------------------------------
+\section{svydbboxplot}
+
+\begin{lstlisting}
+svydbboxplot = function(x, groups = NULL, design, 
+    varwidth = F, outlier = F, all.outlier = F) {
+    
+    groups = enquo(groups)
+    dsn = design$clone()
+    dsn$setx(!!enquo(x))
+    d = dsn$data
+    dsn$storename("x", colnames(d))
+    
+    if (quo_is_null(groups)) {
+        boxes = svydbquantile(x = !!sym(dsn$names$x), 
+            quantile = c(0, 0.25, 0.5, 0.75, 1), 
+            design = dsn) %>% t() %>% tbl_df() %>% 
+            mutate("")
+        ax = c(x = "", y = dsn$names$x)
+        colnames(boxes) = c(as.character(letters[1:5]), 
+            "x")
+    } else {
+        group_name = as.character(groups)[2]
+        dsn$addx(group_name)
+        d = dsn$data
+        dsn$storename("groups", colnames(d))
+        
+        group_levels = distinct(d, 
+            !!sym(dsn$names$groups)) %>% 
+            collect()
+        group_names = paste(colnames(group_levels), 
+            pull(group_levels), sep = " ")
+        group_names2 = paste(colnames(group_levels), 
+            paste("'", pull(group_levels), "'", 
+                sep = ""), sep = " ")
+        
+        f = function(x) {
+            svydbquantile(x = !!sym(dsn$names$x), 
+                quantile = c(0, 0.25, 0.5, 0.75, 
+                  1), design = dsn$subset(x, logical = F))
+        }
+        
+        boxes = sapply(gsub(pattern = " ", 
+            replacement = "==",  x = , 
+            group_names2), f)
+        boxes = t(boxes) %>% tbl_df() %>% 
+            bind_cols(group_levels)
+        ax = c(x = dsn$names$groups, y = dsn$names$x)
+        colnames(boxes) = c(as.character(letters[1:5]), 
+            "x")
+        boxes$x = as.character(boxes$x)
+    }
+    
+    haveOut = F
+    outlsLst = list()
+    if (outlier == T) {
+        boxes = boxes %>% mutate(outUP = d + 1.5 * 
+            (d - b), checkUP = ifelse(outUP < 
+            e, T, F), outLow = b - 1.5 * (d - 
+            b), checkLow = ifelse(outLow > a, 
+            T, F))
+        if (any(boxes$checkLow) == T) {
+            haveOut = T
+            boxes = boxes %>% mutate(a = ifelse(checkLow == 
+                T, outLow, a))
+            outls = paste(gsub(pattern = " ", 
+                replacement = "==", x = group_names2), 
+                "&", dsn$names$x, "<", boxes$a, 
+                collapse = " | ")
+            outlsLow = d %>% 
+                filter(!!!parse_exprs(outls)) %>% 
+                select(x = dsn$names$groups, 
+                    y = dsn$names$x) %>% 
+                mutate(x = as.character(x))
+            if (all.outlier == F) {
+                outlsLow = outlsLow %>% group_by(x) %>% 
+                  summarise(y = min(y))
+            }
+            outlsLow = outlsLow %>% tbl_df()
+            outlsLst = c(outlsLst, list(outlsUP))
+        }
+        
+        if (any(boxes$checkUP) == T) {
+            haveOut = T
+            boxes = boxes %>% mutate(e = ifelse(checkUP == 
+                T, outUP, e))
+            outls = paste(gsub(pattern = " ", 
+                replacement = "==", x = group_names2), 
+                "&", dsn$names$x, ">", boxes$e, 
+                collapse = " | ")
+            outlsUP = d %>% 
+                filter(!!!parse_exprs(outls)) %>% 
+                select(x = dsn$names$groups,
+                    y = dsn$names$x) %>% 
+                mutate(x = as.character(x))
+            if (all.outlier == F) {
+                outlsUP = outlsUP %>% group_by(x) %>% 
+                  summarise(y = max(y))
+            }
+            outlsUP = outlsUP %>% tbl_df()
+        }
+        outls = bind_rows(outlsUP, outlsLow)
+        outls = bind_rows(outlsUP, outlsLow)
+    }
+    
+    p = ggplot(boxes) + labs(x = ax["x"], y = ax["y"])
+    
+    if (varwidth == T) {
+        boxwid = d %>% 
+            group_by(!!sym(dsn$names$groups)) %>% 
+            summarise(wid = n()) %>% collect()
+        p$data = p$data %>% 
+            mutate(width = (boxwid$wid/sum(boxwid$wid)))
+        p = p + geom_boxplot(aes(x = as.factor(x), 
+            ymin = a, lower = b, middle = c, upper = d, 
+            ymax = e, width = width), stat = "identity")
+        
+    } else {
+        p = p + geom_boxplot(aes(x = as.factor(x), 
+            ymin = a, lower = b, middle = c, upper = d, 
+            ymax = e), stat = "identity")
+    }
+    
+    if (haveOut == T) {
+        utlsLst = Reduce(rbind, outlsLst)
+        p = p + geom_point(data = outls, aes(x = x, 
+            y = y))
+    }
+    
+    print(p)
+    
+    return(p)
+}
+\end{lstlisting}
+
+
+%----------------------------------------------------------------
+\section{svydbhexbin, svydbhexplot}
+
+\begin{lstlisting}
+svydbhcell2xy = function(d) {
+    xbins = d$xbins
+    xbnds = d$xbnds
+    c3 = diff(xbnds)/xbins
+    ybnds = d$ybnds
+    c4 = (diff(ybnds) * sqrt(3))/(2 * d$shape * 
+        xbins)
+    jmax = d$dimen[2]
+    cell = d$cell - 1
+    i = cell%/%jmax
+    j = cell%%jmax
+    y = c4 * i + ybnds[1]
+    x = c3 * ifelse(i%%2 == 0, j, j + 0.5) + xbnds[1]
+    
+    return(list(x = x, y = y))
+}
+
+
+svydbhbin = function(xy, x, y, xName, yName, cell, 
+    cnt, xcm, ycm, size, shape, rx, ry, bnd, n) {
+    xmin = rx[1]
+    ymin = ry[1]
+    xr = rx[2] - xmin
+    yr = ry[2] - ymin
+    c1 = size/xr
+    c2 = size * shape/(yr * sqrt(3))
+    
+    jinc = floor(bnd[2])
+    lat = floor(jinc + 1)
+    iinc = floor(2 * jinc)
+    lmax = floor(bnd[1] * as.integer(bnd[2]))
+    con1 = 0.25
+    con2 = 1/3
+    
+    xy = xy %>% mutate(sx = !!quo(c1), sy = !!quo(c2), 
+        xmin = !!quo(xmin), ymin = !!quo(ymin))
+    xy = xy %>% mutate(sx = sx * (x - xmin))
+    xy = xy %>% mutate(sy = sy * (y - ymin))
+    xy = xy %>% mutate(j1 = floor(sx + 0.5), 
+        i1 = floor(sy + 0.5))
+    xy = xy %>% mutate(dist1 = (sx - j1)^2 + 3 * 
+        (sy - i1)^2, iinc = !!quo(iinc), lat = !!quo(lat))
+    xy = xy %>% mutate(con1 = !!quo(con1), 
+        con2 = !!quo(con2), j2 = floor(sx), 
+        i2 = floor(sy))
+    xy = xy %>% mutate(con3 = (sx - j2 - 0.5)^2 + 
+        3 * (sy - i2 - 0.5)^2)
+    xy = xy %>% mutate(L = case_when(dist1 < con1 ~ 
+        floor(i1 * iinc + j1 + 1), dist1 > con2 ~ 
+        floor(floor(sy) * iinc + floor(as.double(sx)) + 
+            lat), TRUE ~ case_when(dist1 <= con3 ~ 
+        floor(i1 * iinc + j1 + 1), TRUE ~ floor(i2 * 
+        iinc + j2 + lat))))
+    
+    Lfulltbl = xy %>% select(x, y, L)
+    cmsTbl = Lfulltbl %>% group_by(L) %>% 
+        summarise(xcm = mean(x), ycm = mean(y)) %>% 
+        arrange(L) %>% select(-L) %>% 
+        collect()
+    Ltbl = xy %>% select(L2 = L, wt) %>% group_by(L2) %>% 
+        summarise(cnt = sum(wt))
+    xy = xy %>% select(x, y) %>% mutate(L2 = row_number())
+    xy = left_join(xy, Ltbl, by = "L2") %>% 
+        mutate(cnt = case_when(is.na(cnt) ~ 
+            0, TRUE ~ cnt)) %>% 
+        arrange(L2)
+    cntsTbl = xy %>% rename(cell = L2) %>% 
+        mutate(lt1 = case_when(cnt >  0 ~ 1, TRUE ~ 0)) %>% 
+        filter(lt1 == 1) %>% 
+        select(-lt1) %>% collect()
+    
+    out = list(cell = cntsTbl$cell, count = cntsTbl$cnt, 
+        xcm = cmsTbl$xcm, ycm = cmsTbl$ycm, xbins = size, 
+        shape = shape, xbnds = rx, ybnds = ry, 
+        dimen = bnd, n = n, ncells = nrow(cntsTbl), 
+        xlab = xName, ylab = yName)
+    xy = svydbhcell2xy(out)
+    out = c(xy, out)
+    
+    return(out)
+}
+
+svydbhexbin = function(formula, design, xbins = 30, 
+    shape = 1) {
+    
+    dsn = design$clone()
+    dsn$setx(formula)
+    dsn$storename("y", all.vars(formula)[1])
+    dsn$storename("x", all.vars(formula)[-1])
+    d = dsn$data
+    d = d %>% rename(x = !!sym(dsn$names$x)) %>% 
+        rename(y = !!sym(dsn$names$y)) %>% 
+        rename(wt = !!sym(dsn$wt)) %>% 
+        filter(!is.na(x)) %>% filter(!is.na(y))
+    d = compute(d)
+    
+    n = d %>% db_nrow()
+    x = d %>% select(x)
+    y = d %>% select(y)
+    
+    xbnds = c(dbmin(d, x), dbmax(d, x))
+    ybnds = c(dbmin(d, y), dbmax(d, y))
+    
+    jmax = floor(xbins + 1.5001)
+    c1 = 2 * floor((xbins * shape)/sqrt(3) + 1.5001)
+    imax = trunc((jmax * c1 - 1)/jmax + 1)
+    lmax = jmax * imax
+    
+    ans = svydbhbin(xy = d, x = x, y = y, 
+        xName = dsn$names$x, yName = dsn$names$y, 
+        cell = as.integer(lmax), cnt = as.integer(lmax), 
+        xcm = as.integer(lmax), ycm = as.integer(lmax), 
+        size = xbins, shape = shape, 
+        rx = as.double(xbnds), ry = as.double(ybnds), 
+        bnd = as.integer(c(imax, jmax)), n = n)
+    
+    return(ans)
+}
+
+svydbhexplot = function(d, xlab = d$xlab, ylab = d$ylab) {
+    pdata = tibble(x = d$x, y = d$y, count = d$count, 
+        xcm = d$xcm, ycm = d$ycm)
+    
+    p = ggplot(pdata) + geom_hex(aes(x = x, y = y, 
+        fill = count), 
+            color = "black", stat = "identity") + 
+        labs(x = xlab, y = ylab) + 
+        scale_fill_continuous(trans = "reverse")
+    
+    print(p)
+    
+    invisible(p)
+}
+\end{lstlisting}
+
+
+%----------------------------------------------------------------
+\section{svydbcoplot}
+
+\begin{lstlisting}
+svydbcoplot = function(formula, by, design) {
+    if (!is_formula(by)) {
+        stop("by must be a formula")
+    }
+    
+    y = all.vars(formula)[1]
+    x = all.vars(formula)[-1]
+    dsn = design$clone()
+    
+    by_var = all.vars(by)
+    by = dsn$data %>% select(!!!syms(by_var)) %>% 
+        distinct() %>% arrange(!!sym(by_var[1])) %>% 
+        collect()
+    by = split(by, seq(nrow(by)))
+    
+    filterData = function(by, dsn, x, y) {
+        dsn = dsn$subset(paste(colnames(by), " == ", 
+            by, collapse = " & "), logical = F)
+        hb = svydbhexbin(formula, design = dsn)
+        if (length(hb$x) | length(hb$y) 
+                | length(hb$count) != 0) {
+            cbind(tibble(x = hb$x, y = 
+                hb$y, count = hb$count),  by)
+        }
+    }
+    
+    p = lapply(by, filterData, dsn = dsn) %>% 
+        Reduce(rbind, .)
+    
+    p = ggplot(p) + geom_hex(aes(x = x, y = y, 
+        fill = count), 
+            color = "black", stat = "identity") + 
+        labs(x = x, y = y) + 
+        scale_fill_continuous(trans = "reverse") + 
+        facet_wrap(by_var, labeller = "label_both")
+    
+    print(p)
+    
+    invisible(p)
+}
+\end{lstlisting}
+
+
+%----------------------------------------------------------------
+\section{Other Functions} \label{appena:otherfunc}
+
+\begin{lstlisting}
+dbmin = function(data, var, asNum = T) {
+    var = enquo(var)
+    data = data %>% ungroup() %>% select(!!var) %>% 
+        summarise(min = min(!!var))
+    if (asNum == T) {
+        data %>% pull
+    } else {
+        data
+    }
+}
+
+dbmax = function(data, var, asNum = T) {
+    var = enquo(var)
+    data = data %>% ungroup() %>% select(!!var) %>% 
+        summarise(max = max(!!var))
+    if (asNum == T) {
+        data %>% pull
+    } else {
+        data
+    }
+}
+
+db_nrow = function(data) {
+    data %>% ungroup() %>% count() %>% pull()
+}
+
+db_dim = function(data) {
+    n_rows = data %>% ungroup() %>% count() %>% 
+        pull()
+    n_cols = ncol(data)
+    
+    out = c(n_rows, n_cols)
+    names(out) = c("rows", "cols")
+    out
+}
+
+db_view = function(data, num = 1) {
+    if (class(data) == "list") {
+        View(data[[num]] %>% tbl_df())
+    } else {
+        View(data %>% tbl_df)
+    }
+}
+
+db_rowSums_mut = function(data, vars = NULL, 
+                            newRowName = "rSum") {
+    if (is.null(vars)) {
+        s = paste(colnames(data), collapse = " + ")
+    } else {
+        s = paste(vars, collapse = " + ")
+    }
+    q = quote(mutate(data, rSum = s))
+    
+    eval(parse(text = sub("rSum", newRowName, 
+        sub("s", s, deparse(q)))))
+}
+
+db_rowSums = function(data) {
+    cn = colnames(data)
+    rs = paste("`", cn, "`", sep = "", collapse = " + ")
+    data %>% transmute(rowsum = !!parse_expr(rs))
+}
+
+db_cbind = function(x, y) {
+    x = x %>% mutate(`___i` = "key")
+    y = y %>% mutate(`___i` = "key")
+    out = inner_join(x, y, by = "___i", copy = T) %>% 
+        select(-`___i`)
+    return(out)
+}
+
+db_slice = function(data, n) {
+    n = enquo(n)
+    data %>% mutate(`___i` = row_number()) %>% 
+        filter(`___i` <= !!n) %>% select(-`___i`)
+}
+
+dummy_mut = function(data, by, withBase = T, 
+                            return.level = F) {
+    by = enquo(by)
+    dum = data %>% distinct(!!by) %>% arrange(!!by) %>% 
+        data.frame() %>% na.omit()
+    level = as.character(dum[, 1])
+    cs = contrasts(as.factor(dum[, 1]))
+    by_name = colnames(dum)
+    
+    if (withBase == T) {
+        c1 = c(1, rep(0, nrow(dum) - 1))
+        dum = cbind(dum, c1, contrasts(as.factor(dum[, 
+            1])))
+        name = paste(colnames(dum)[1], as.character(dum[, 
+            1]), sep = "_")
+        colnames(dum) = c(colnames(dum)[1], name)
+    } else {
+        dum = cbind(dum, contrasts(as.factor(dum[, 
+            1])))
+        name = paste(colnames(dum)[1], as.character(dum[, 
+            1])[-1], sep = "_")
+        colnames(dum) = c(colnames(dum)[1], name)
+    }
+    
+    dum = inner_join(data, dum, by = by_name, 
+        copy = T)
+    
+    if (withBase == F) {
+        dum = dum %>% select(-!!by)
+    }
+    
+    if (return.level == T) {
+        dum = list(dum = dum, levels = level)
+        return(dum)
+    } else {
+        return(dum)
+    }
+}
+
+db_cut = function(var, breaks, data) {
+    var = enquo(var)
+    var_name = as.character(var)[2]
+    data = data %>% rename(vars = !!var) %>% 
+        filter(!is.na(vars))
+    breaks = breaks[-1]
+    trues = seq(length(breaks))
+    temp_exprs = paste("ifelse(vars", "<= ", breaks, 
+        ",", trues, ", _f_)")
+    temp_exprs[length(breaks)] = gsub(pattern = "[_]f[_]", 
+        replacement = "NA", x = temp_exprs[length(breaks)])
+    mut_exprs = temp_exprs[1]
+    
+    for (i in 2:length(breaks)) {
+        mut_exprs = gsub(pattern = "[_]f[_]", 
+            replacement = temp_exprs[i], x = mut_exprs)
+    }
+    
+    mut_exprs = parse_expr(mut_exprs)
+    data = data %>% mutate(`_cuts_` = !!mut_exprs) %>% 
+        rename(`:=`(!!sym(var_name), vars)) %>% 
+        rename(cuts = `_cuts_`)
+    data
+}
+
+db_cut2 = function(var, breaks, right = TRUE, 
+    data) {
+    var = enquo(var)
+    mult = diff(breaks)[1]
+    
+    if (right == TRUE) {
+        data = data %>% mutate(cut = ((!!quo(mult)) * 
+            ceiling((!!var)/(!!quo(mult)))) - 
+            (!!quo(mult)))
+    } else {
+        data = data %>% mutate(cut = ((!!quo(mult)) * 
+            floor((!!var)/(!!quo(mult)))))
+    }
+    
+    return(data)
+}
+
+svydbVar2 = function(x, xleft = 1, xright = 2, 
+    st, m_h, data) {
+    xleft = x[xleft]
+    xright = x[xright]
+    m = data
+    m = m %>% select(xleft = !!sym(xleft), 
+        xright = !!sym(xright), st = st, m_h = m_h)
+    m_h = m %>% select(st, m_h) %>% mutate(m_h = 1) %>% 
+        group_by(st) %>% summarise(m_h = sum(m_h))
+    m = m %>% select(-m_h)
+    m = m %>% mutate(ztz = xleft * xright) %>% 
+        group_by(st) %>% summarise(ztz = sum(ztz))
+    m = left_join(m, m_h, by = "st")
+    m = m %>% mutate(scaled = ztz * (m_h/(m_h - 1))) %>% 
+        select(scaled) %>% summarise(sum(scaled)) %>% 
+        compute(temporary = T) %>% pull()
+    return(m)
+}
+svydbVar = function(x, st, m_h, data) {
+    m = data
+    m = m %>% select(x = x, st = st, m_h = m_h)
+    m_h = m %>% select(st, m_h) %>% mutate(m_h = 1) %>% 
+        group_by(st) %>% summarise(m_h = sum(m_h))
+    m = m %>% select(-m_h)
+    m = m %>% mutate(ztz = x * x) %>% group_by(st) %>% 
+        summarise(ztz = sum(ztz))
+    m = left_join(m, m_h, by = "st")
+    m = m %>% mutate(scaled = ztz * (m_h/(m_h - 1))) %>% 
+        select(scaled) %>% summarise(sum(scaled)) %>% 
+        compute(temporary = T) %>% pull()
+    return(m)
+}
+
+c2f = function(x) {
+    as.formula(paste("~", x, sep = ""))
+}
+
+db_columnAsCharacter = function(x, cols){
+  
+  checktype =  x %>% select(!!!syms(cols)) %>% 
+    head(1) %>% collect %>% lapply(type_sum) %>% 
+    unlist()
+  
+  numCols = checktype[checktype %in% 
+                c("int", "dbl")] %>% names()
+  
+  for(i in 1:length(numCols)){
+    x = x %>% 
+        mutate(!!quo_name(numCols[1]) := 
+            as.character(!!sym(numCols[1])))
+  }
+  
+  x
+}
+
+svydb_monet_sampleN = function(data, n) {
+    q = paste("SELECT * FROM", data$ops$x, "SAMPLE", 
+        n)
+    dbGetQuery(data$src$con, q)
+}
+
+as.data.frame.svydbstat = function(x) {
+    ans = cbind(coef(x), SE(x))
+    colnames(ans) = c(attr(x, "statistic"), "SE")
+    ans
+}
+
+print.svydbstat = function(xx, ...) {
+    v <- attr(xx, "var")
+    m = cbind(xx, sqrt(v))
+    colnames(m) = c(attr(xx, "statistic"), "SE")
+    printCoefmat(m)
+}
+
+coef.svydbstat = function(object, ...) {
+    attr(object, "statistic") = NULL
+    attr(object, "name") = NULL
+    attr(object, "var") = NULL
+    unclass(object) %>% t() %>% as.vector()
+}
+
+SE.svydbstat = function(x, ...) {
+    s = attr(x, "var") %>% sqrt()
+    names(s) = attr(x, "name")
+    return(s)
+}
+
+print.svydbrepstat = function(xx, ...) {
+    if (is.list(xx)) {
+        xx = xx$svydbrepstat
+    }
+    v <- attr(xx, "var")
+    m = cbind(xx, sqrt(v))
+    colnames(m) = c(attr(xx, "statistic"), "SE")
+    rownames(m) = attr(xx, "name")
+    printCoefmat(m)
+}
+
+coef.svydbrepstat = function(object, ...) {
+    if (is.list(object)) {
+        object = object$svydbrepstat
+    }
+    attr(object, "statistic") = NULL
+    attr(object, "name") = NULL
+    attr(object, "var") = NULL
+    unclass(object) %>% t() %>% as.vector()
+}
+
+SE.svydbrepstat = function(x, ...) {
+    if (is.list(x)) {
+        x = x$svydbrepstat
+    }
+    s = attr(x, "var") %>% sqrt()
+    names(s) = attr(x, "name")
+    return(s)
+}
+
+print.svydblm = function(x, digits = 
+    max(3L, getOption("digits") - 3L), ...) {
+    print(x$design)
+    cat("\nSurvey design:\n")
+    print(x$design$call)
+    cat("\nCall:\n", paste(deparse(x$call), sep = "\n", 
+        collapse = "\n"), "\n\n", sep = "")
+    if (length(coef(x))) {
+        cat("Coefficients:\n")
+        print.default(format(coef(x), digits = digits), 
+            print.gap = 2L, quote = FALSE)
+    } else cat("No coefficients\n")
+    cat("\n")
+    invisible(x)
+}
+summary.svydblm = function(object) {
+    df.r = object$df.residual
+    coef.p = coef(object)
+    covmat = vcov(object)
+    dimnames(covmat) = list(colnames(coef.p), 
+        colnames(coef.p))
+    var.cf = diag(covmat)
+    s.err = sqrt(var.cf)
+    tvalue = coef.p/s.err
+    dn = c("Estimate", "Std. Error")
+    pvalue <- 2 * pt(-abs(tvalue), df.r)
+    coef.table <- rbind(coef.p, t(as.matrix(s.err)), 
+        tvalue, pvalue) %>% t()
+    dimnames(coef.table) <- list(colnames(coef.p), 
+        c(dn, "t value", "Pr(>|t|)"))
+    ans = list(df.residual = df.r, 
+        coefficients = coef.table, 
+        cov.unscaled = covmat, cov.scaled = covmat, 
+        call = object$call, design = object$design)
+    class(ans) <- c("summary.svydblm", "summary.glm")
+    return(ans)
+}
+print.summary.svydblm = function(x, digits = max(3, 
+    getOption("digits") - 3), 
+    signif.stars = getOption("show.signif.stars"), ...) {
+    cat("\nCall:\n")
+    cat(paste(deparse(x$call), sep = "\n", collapse = "\n"), 
+        "\n\n", sep = "")
+    cat("Survey design:\n")
+    print(x$design$call)
+    cat("\nCoefficients:\n")
+    coefs <- x$coefficients
+    if (!is.null(aliased <- is.na(x$coefficients[, 
+        1])) && any(aliased)) {
+        cn <- names(aliased)
+        coefs <- matrix(NA, length(aliased), 4, 
+            dimnames = list(cn, colnames(coefs)))
+        coefs[!aliased, ] <- x$coefficients
+    }
+    printCoefmat(coefs, digits = digits, 
+        signif.stars = signif.stars, 
+        na.print = "NA", ...)
+    invisible(x)
+}
+
+predict.svydblm = function(object, newdata = NULL, 
+    ...) {
+    tt = delete.response(object$terms)
+    mf = model.frame(tt, data = newdata, 
+        xlev = object$design$levels)
+    mm = model.matrix(tt, mf)
+    eta = drop(mm %*% as.vector(coef(object)))
+    attr(eta, "var") = drop(rowSums((mm %*% vcov(object)) * 
+        mm))
+    attr(eta, "statistic") = "link"
+    class(eta) <- "svydbstat"
+    eta
+}
+
+vcov.svydblm = function(x, ...) {
+    x$cov.unscaled
+}
+\end{lstlisting}
