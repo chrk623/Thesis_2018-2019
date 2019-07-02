@@ -8,7 +8,7 @@ Supervisor: Anna Fergusson Chris Wild
 
 URL: https://github.com/chrk623/dataAnim
 
-*The videos will not play in PDF, but you can find them [HERE](/Masters/vid)*
+*The videos will not play in PDF, but you can find them [HERE](/Masters/vids)*
 
 ## 2018 - Honours Research Project
 
